@@ -3,11 +3,17 @@
   <head>
     <meta charset="UTF-8" />
     <title>CZML Editor</title>
+    <link rel="stylesheet" href="/styles/style.css" />
     <link href="/Cesium/Widgets/widgets.css" rel="stylesheet" />
     <script src="/Cesium/Cesium.js"></script>
   </head>
   <body>
-    <div id="cesiumContainer"></div>
+    <div id="layout">
+      <div id="cesiumContainer"></div>
+      <div id="editorPanel">
+        <button id="addPointBtn">添加点</button>
+      </div>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

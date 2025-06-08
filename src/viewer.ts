@@ -1,24 +1,23 @@
 export function initViewer(containerId: string) {
+  Cesium.Ion.defaultAccessToken = import.meta.env.VITE_CESIUM_ION_TOKEN as string;
+
   const viewer = new Cesium.Viewer(containerId, {
     animation: false,
     timeline: false,
     shouldAnimate: true,
   });
-  Cesium.Ion.defaultAccessToken = '你的TOKEN';
+
   return viewer;
 }
 
-export function onClickCoord(viewer: any, callback: (coord: any) => void) {
-  const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
-  handler.setInputAction((event: any) => {
-    const pos = viewer.scene.pickPosition(event.position);
-    if (pos) {
-      const carto = Cesium.Cartographic.fromCartesian(pos);
-      callback({
-        lon: Cesium.Math.toDegrees(carto.longitude),
-        lat: Cesium.Math.toDegrees(carto.latitude),
-        height: carto.height,
-      });
-    }
-  }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+
+export function addStaticPoint(viewer: any) {
+  viewer.entities.add({
+    position: Cesium.Cartesian3.fromDegrees(139.7670, 35.6814, 0), // 东京站
+    point: {
+      pixelSize: 10,
+      color: Cesium.Color.RED,
+    },
+    name: "静态点"
+  });
 }
