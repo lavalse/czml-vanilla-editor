@@ -2,18 +2,36 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <title>CZML Editor</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CZML Editor - MVC Architecture</title>
     <link rel="stylesheet" href="/styles/style.css" />
     <link href="/Cesium/Widgets/widgets.css" rel="stylesheet" />
     <script src="/Cesium/Cesium.js"></script>
   </head>
   <body>
     <div id="layout">
+      <!-- 地图容器 -->
       <div id="cesiumContainer"></div>
+      
+      <!-- 编辑器面板 -->
       <div id="editorPanel">
-        <button id="addPointBtn">添加点</button>
+        <!-- UI内容将由UIView动态创建 -->
       </div>
     </div>
+
+    <!-- 应用程序入口 -->
     <script type="module" src="/src/main.js"></script>
+    
+    <!-- 开发环境的调试信息 -->
+    <script>
+      // 开发环境下显示控制台欢迎信息
+      if (import.meta.env.DEV) {
+        console.log('%c🌍 CZML Editor - MVC架构版本', 'color: #007bff; font-size: 16px; font-weight: bold;');
+        console.log('架构说明:');
+        console.log('- Model: 数据管理 (CzmlModel, PointModel)');
+        console.log('- View: 界面显示 (MapView, UIView)'); 
+        console.log('- Controller: 逻辑控制 (EditorController)');
+      }
+    </script>
   </body>
 </html>
