@@ -2,10 +2,12 @@ import CzmlModel from '../models/CzmlModel.js';
 import PointModel from '../models/PointModel.js';
 import MapView from '../views/MapView.js';
 import UIView from '../views/UIView.js';
+import CommandSystem from '../commands/CommandSystem.js';
 
 /**
  * 编辑器控制器
  * 协调Model和View之间的交互，处理用户操作
+ * 更新为支持Rhino风格的命令行交互
  */
 class EditorController {
   constructor(mapContainerId, uiPanelId) {
@@ -16,8 +18,12 @@ class EditorController {
     this.mapView = new MapView(mapContainerId);
     this.uiView = new UIView(uiPanelId);
     
-    // 当前状态
-    this.isAddingPoint = false;
+    // 初始化命令系统
+    this.commandSystem = new CommandSystem();
+    
+    // 命令历史管理
+    this.commandHistory = [];
+    this.historyIndex = -1;
     
     this.init();
   }
@@ -28,9 +34,15 @@ class EditorController {
   init() {
     this.setupModelListeners();
     this.setupViewListeners();
+    this.setupMapListeners();
     this.updateUI();
     
-    console.log('编辑器控制器初始化完成');
+    // 聚焦到命令输入框
+    setTimeout(() => {
+      this.uiView.focusCommandInput();
+    }, 100);
+    
+    console.log('编辑器控制器初始化完成 - 命令行模式');
   }
 
   /**
@@ -48,61 +60,210 @@ class EditorController {
    * 设置View监听器
    */
   setupViewListeners() {
-    // UI按钮事件监听
-    this.uiView.addListener('addPoint', () => {
-      this.handleAddPointRequest();
+    // 命令执行
+    this.uiView.addListener('executeCommand', (command) => {
+      this.handleCommand(command);
     });
 
-    this.uiView.addListener('clearAll', () => {
-      this.handleClearAllPoints();
+    // 取消命令
+    this.uiView.addListener('cancelCommand', () => {
+      this.handleCancelCommand();
+    });
+
+    // 历史导航
+    this.uiView.addListener('navigateHistory', (direction) => {
+      this.handleHistoryNavigation(direction);
+    });
+
+    // 输入变化（用于实时更新占位符等）
+    this.uiView.addListener('inputChange', (value) => {
+      this.handleInputChange(value);
     });
   }
 
   /**
-   * 处理添加点请求
+   * 设置地图监听器
    */
-  handleAddPointRequest() {
-    if (this.isAddingPoint) {
-      // 如果正在添加点，则取消
-      this.cancelAddPoint();
-    } else {
-      // 开始添加点流程
-      this.startAddPoint();
+  setupMapListeners() {
+    // 初始时不启用地图点击，只有命令需要时才启用
+    // this.mapView.enableMapClickToAddPoint 会在需要时调用
+  }
+
+  /**
+   * 处理命令输入
+   * @param {string} command 用户输入的命令
+   */
+  handleCommand(command) {
+    if (!command.trim()) return;
+
+    // 显示用户输入的命令
+    this.uiView.addOutput(`> ${command}`, 'command');
+
+    // 添加到历史记录
+    if (command.trim() !== this.commandHistory[this.commandHistory.length - 1]) {
+      this.commandHistory.push(command.trim());
+    }
+    this.historyIndex = this.commandHistory.length;
+
+    // 执行命令
+    const context = {
+      czmlModel: this.czmlModel,
+      mapView: this.mapView,
+      uiView: this.uiView
+    };
+
+    const result = this.commandSystem.parseAndExecute(command, context);
+    
+    // 处理命令结果
+    this.handleCommandResult(result);
+    
+    // 更新UI状态
+    this.updateCommandInputState();
+  }
+
+  /**
+   * 处理命令结果
+   * @param {Object} result 命令执行结果
+   */
+  handleCommandResult(result) {
+    if (result.message) {
+      const messageType = result.success ? 'success' : 'error';
+      this.uiView.addOutput(result.message, messageType);
+    }
+
+    // 根据命令结果控制地图交互
+    if (result.needsMapClick) {
+      this.enableMapInteraction();
+    } else if (result.success && !result.needsConfirm) {
+      this.disableMapInteraction();
+    }
+
+    // 如果命令返回了坐标字符串，更新输入框
+    if (result.coordString) {
+      this.uiView.updateCommandInput(result.coordString);
+    }
+
+    // 如果需要更新输入框（无论是否有坐标字符串）
+    if (result.updateInput) {
+      this.updateCommandInputState();
+    }
+
+    // 如果命令完成，清空输入框并禁用地图交互
+    if (result.success && !result.needsMapClick && !result.needsConfirm) {
+      this.uiView.updateCommandInput('');
+      this.disableMapInteraction();
     }
   }
 
   /**
-   * 开始添加点流程
+   * 处理取消命令
    */
-  startAddPoint() {
-    this.isAddingPoint = true;
+  handleCancelCommand() {
+    const result = this.commandSystem.cancelCurrentCommand();
     
-    // 更新UI状态
-    this.uiView.updateStatus('请点击地图选择位置...');
-    this.uiView.highlightAddButton(true);
+    if (result.message) {
+      this.uiView.addOutput(result.message, result.success ? 'info' : 'error');
+    }
     
-    // 启用地图点击功能
-    this.mapView.enableMapClickToAddPoint((coord) => {
-      this.handleMapClick(coord);
-    });
-
-    console.log('开始添加点流程');
+    // 清空输入框并重置状态
+    this.uiView.updateCommandInput('');
+    this.updateCommandInputState();
+    
+    // 禁用地图交互并隐藏临时点
+    this.disableMapInteraction();
+    this.mapView.hideTemporaryPoint();
   }
 
   /**
-   * 取消添加点
+   * 处理历史命令导航
+   * @param {number} direction 方向 (-1: 上一个, 1: 下一个)
    */
-  cancelAddPoint() {
-    this.isAddingPoint = false;
+  handleHistoryNavigation(direction) {
+    if (this.commandHistory.length === 0) return;
+
+    this.historyIndex += direction;
     
-    // 恢复UI状态
-    this.uiView.updateStatus('就绪');
-    this.uiView.highlightAddButton(false);
+    if (this.historyIndex < 0) {
+      this.historyIndex = 0;
+    } else if (this.historyIndex >= this.commandHistory.length) {
+      this.historyIndex = this.commandHistory.length;
+      this.uiView.updateCommandInput('');
+      return;
+    }
+
+    const command = this.commandHistory[this.historyIndex];
+    this.uiView.updateCommandInput(command);
+  }
+
+  /**
+   * 处理输入变化
+   * @param {string} value 当前输入值
+   */
+  handleInputChange(value) {
+    // 这里可以添加实时验证或提示逻辑
+    // 例如：实时验证坐标格式等
+  }
+
+  /**
+   * 启用地图交互
+   */
+  enableMapInteraction() {
+    this.mapView.enableMapClickToAddPoint((coord) => {
+      this.handleMapClick(coord);
+    });
     
-    // 禁用地图点击功能
+    // 启用右键确认功能
+    this.mapView.enableRightClickConfirm(() => {
+      this.handleRightClickConfirm();
+    });
+    
+    console.log('地图交互已启用（左键选点，右键确认）');
+  }
+
+  /**
+   * 禁用地图交互
+   */
+  disableMapInteraction() {
     this.mapView.disableMapClick();
+    this.mapView.disableRightClickConfirm();
+    console.log('地图交互已禁用');
+  }
+
+  /**
+   * 处理右键确认
+   */
+  handleRightClickConfirm() {
+    // 检查是否有活动命令
+    const commandStatus = this.commandSystem.getCurrentCommandStatus();
+    if (!commandStatus.hasCommand) {
+      return;
+    }
+
+    // 获取当前输入框的值
+    const currentInput = this.uiView.commandInput ? this.uiView.commandInput.value : '';
     
-    console.log('取消添加点');
+    if (!currentInput.trim()) {
+      this.uiView.addOutput('右键确认：没有可执行的内容', 'info');
+      return;
+    }
+
+    // 显示右键确认的执行信息
+    this.uiView.addOutput(`> ${currentInput} (右键确认)`, 'command');
+    
+    // 执行命令
+    const context = {
+      czmlModel: this.czmlModel,
+      mapView: this.mapView,
+      uiView: this.uiView
+    };
+
+    const result = this.commandSystem.parseAndExecute(currentInput, context);
+    
+    // 处理命令结果
+    this.handleCommandResult(result);
+    
+    // 更新UI状态
+    this.updateCommandInputState();
   }
 
   /**
@@ -110,61 +271,49 @@ class EditorController {
    * @param {Object} coord 点击位置的坐标
    */
   handleMapClick(coord) {
-    // 验证坐标
-    if (!PointModel.validateCoordinate(coord)) {
-      this.uiView.showMessage('坐标无效，请重新选择位置', 'error');
+    // 只有当前有命令且命令需要地图交互时才处理点击
+    const commandStatus = this.commandSystem.getCurrentCommandStatus();
+    if (!commandStatus.hasCommand || !commandStatus.isWaitingForMapClick) {
+      // 如果没有活动命令需要地图交互，忽略点击
       return;
     }
 
-    // 显示确认对话框
-    const confirmed = this.uiView.showAddPointConfirm('是否在此位置添加点？', coord);
+    // 验证坐标
+    if (!PointModel.validateCoordinate(coord)) {
+      this.uiView.addOutput('坐标无效，请重新选择位置', 'error');
+      return;
+    }
+
+    // 将点击事件传递给命令系统
+    const result = this.commandSystem.handleMapClick(coord);
     
-    if (confirmed) {
-      this.confirmAddPoint(coord);
+    if (result.success) {
+      // 显示临时预览点（每次点击都更新预览点位置）
+      this.mapView.showTemporaryPoint(coord);
+      
+      // 处理命令结果
+      this.handleCommandResult(result);
+      
+      // 强制更新输入状态，确保占位符反映当前坐标
+      this.updateCommandInputState();
     } else {
-      // 用户取消，但保持添加模式
-      this.mapView.hideTemporaryPoint();
+      this.uiView.addOutput(result.message || '地图点击处理失败', 'error');
     }
   }
 
   /**
-   * 确认添加点
-   * @param {Object} coord 坐标对象
+   * 更新命令输入状态
    */
-  confirmAddPoint(coord) {
-    try {
-      // 添加到Model（这会自动触发View更新）
-      const pointId = this.czmlModel.addPoint(coord);
-      
-      // 更新状态
-      this.uiView.updateStatus(`已添加点: ${pointId}`);
-      this.uiView.showMessage('点添加成功！', 'success');
-      
-      // 结束添加流程
-      this.cancelAddPoint();
-      
-      console.log(`点添加成功: ${pointId}`, coord);
-      
-    } catch (error) {
-      console.error('添加点失败:', error);
-      this.uiView.showMessage('添加点失败，请重试', 'error');
-    }
-  }
-
-  /**
-   * 处理清除所有点
-   */
-  handleClearAllPoints() {
-    try {
-      this.czmlModel.clearAllPoints();
-      this.uiView.updateStatus('已清除所有点');
-      this.uiView.showMessage('所有点已清除', 'success');
-      
-      console.log('所有点已清除');
-      
-    } catch (error) {
-      console.error('清除点失败:', error);
-      this.uiView.showMessage('清除失败，请重试', 'error');
+  updateCommandInputState() {
+    const status = this.commandSystem.getCurrentCommandStatus();
+    
+    if (status.hasCommand) {
+      this.uiView.updateCommandInput(
+        this.uiView.commandInput ? this.uiView.commandInput.value : '',
+        status.placeholder
+      );
+    } else {
+      this.uiView.updateCommandInput('', '输入命令 (例如: AddPoint)');
     }
   }
 
@@ -173,7 +322,6 @@ class EditorController {
    */
   updateUI() {
     this.updatePointsList();
-    this.updateStatus();
   }
 
   /**
@@ -182,18 +330,6 @@ class EditorController {
   updatePointsList() {
     const points = this.czmlModel.getAllPoints();
     this.uiView.updatePointsList(points);
-  }
-
-  /**
-   * 更新状态显示
-   */
-  updateStatus() {
-    const points = this.czmlModel.getAllPoints();
-    const status = this.isAddingPoint ? 
-      '请点击地图选择位置...' : 
-      `就绪 (${points.length} 个点)`;
-    
-    this.uiView.updateStatus(status);
   }
 
   /**
@@ -225,12 +361,12 @@ class EditorController {
       
       URL.revokeObjectURL(url);
       
-      this.uiView.showMessage('CZML文件导出成功！', 'success');
+      this.uiView.addOutput('CZML文件导出成功！', 'success');
       console.log('CZML导出成功');
       
     } catch (error) {
       console.error('导出CZML失败:', error);
-      this.uiView.showMessage('导出失败，请重试', 'error');
+      this.uiView.addOutput('导出失败: ' + error.message, 'error');
     }
   }
 
@@ -240,12 +376,12 @@ class EditorController {
    */
   loadCzmlData(czmlData) {
     try {
-      // 这里可以实现加载外部CZML数据的逻辑
-      // 现在先简单地清除现有数据然后重新添加
+      // 清除现有数据
       this.czmlModel.clearAllPoints();
       
       // 遍历CZML数据，添加点
       if (Array.isArray(czmlData)) {
+        let loadedCount = 0;
         czmlData.forEach(entity => {
           if (entity.position && entity.point && entity.id !== 'document') {
             const coords = entity.position.cartographicDegrees;
@@ -255,17 +391,19 @@ class EditorController {
                 lat: coords[1],
                 height: coords[2]
               });
+              loadedCount++;
             }
           }
         });
+        
+        this.uiView.addOutput(`CZML数据加载成功！加载了 ${loadedCount} 个点`, 'success');
       }
       
-      this.uiView.showMessage('CZML数据加载成功！', 'success');
       console.log('CZML数据加载成功');
       
     } catch (error) {
       console.error('加载CZML数据失败:', error);
-      this.uiView.showMessage('加载数据失败，请检查格式', 'error');
+      this.uiView.addOutput('加载数据失败: ' + error.message, 'error');
     }
   }
 
@@ -275,11 +413,39 @@ class EditorController {
    */
   getStatistics() {
     const points = this.czmlModel.getAllPoints();
+    const commandStatus = this.commandSystem.getCurrentCommandStatus();
+    
     return {
       totalPoints: points.length,
       czmlSize: JSON.stringify(this.getCzmlData()).length,
-      isEditing: this.isAddingPoint
+      hasActiveCommand: commandStatus.hasCommand,
+      activeCommand: commandStatus.commandName || null,
+      commandHistoryLength: this.commandHistory.length
     };
+  }
+
+  /**
+   * 执行命令（编程接口）
+   * @param {string} command 要执行的命令
+   */
+  executeCommand(command) {
+    this.handleCommand(command);
+  }
+
+  /**
+   * 获取可用命令列表
+   * @returns {Array} 命令列表
+   */
+  getAvailableCommands() {
+    return this.commandSystem.getAvailableCommands();
+  }
+
+  /**
+   * 获取命令历史
+   * @returns {Array} 命令历史
+   */
+  getCommandHistory() {
+    return [...this.commandHistory];
   }
 
   /**

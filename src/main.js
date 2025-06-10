@@ -2,7 +2,7 @@ import EditorController from './controllers/EditorController.js';
 
 /**
  * CZML编辑器应用程序入口
- * 采用MVC架构模式
+ * 采用MVC架构模式 + 命令行交互
  */
 class CzmlEditorApp {
   constructor() {
@@ -14,7 +14,7 @@ class CzmlEditorApp {
    * 初始化应用程序
    */
   init() {
-    console.log('CZML编辑器启动中...');
+    console.log('CZML编辑器启动中... (命令行模式)');
     
     try {
       // 等待DOM加载完成
@@ -42,12 +42,34 @@ class CzmlEditorApp {
       // 设置全局变量供调试使用
       window.czmlEditor = {
         controller: this.controller,
+        
+        // 数据操作
         getCzmlData: () => this.controller.getCzmlData(),
         exportCzml: () => this.controller.exportCzml(),
-        getStats: () => this.controller.getStatistics()
+        loadCzmlData: (data) => this.controller.loadCzmlData(data),
+        
+        // 统计信息
+        getStats: () => this.controller.getStatistics(),
+        
+        // 命令操作
+        executeCommand: (cmd) => this.controller.executeCommand(cmd),
+        getCommands: () => this.controller.getAvailableCommands(),
+        getHistory: () => this.controller.getCommandHistory(),
+        
+        // 快捷操作
+        addPoint: (lon, lat, height = 0) => {
+          this.controller.executeCommand(`AddPoint`);
+          // 等待一小段时间让命令系统准备好
+          setTimeout(() => {
+            this.controller.executeCommand(`${lon},${lat},${height}`);
+          }, 100);
+        },
+        
+        clearAll: () => this.controller.executeCommand('Clear'),
+        help: () => this.controller.executeCommand('Help')
       };
       
-      console.log('CZML编辑器初始化完成');
+      console.log('CZML编辑器初始化完成 (命令行模式)');
       console.log('调试提示: 使用 window.czmlEditor 访问编辑器实例');
       
       // 显示启动成功消息
@@ -65,18 +87,33 @@ class CzmlEditorApp {
   showWelcomeMessage() {
     console.log(`
     ================================
-    🌍 CZML编辑器 v1.0
+    🌍 CZML编辑器 v2.0 - 命令行模式
     ================================
     
     使用说明:
-    1. 点击 "添加点" 按钮
-    2. 在地图上点击选择位置
-    3. 确认添加点
+    1. 在命令行输入 "AddPoint" 并按回车
+    2. 左键点击地图选择位置或直接输入坐标
+    3. 按回车或右键确认添加点
+    
+    可用命令:
+    - AddPoint    // 添加点
+    - Clear       // 清除所有点  
+    - Help        // 显示帮助
+    
+    快捷键:
+    - Enter       // 执行命令
+    - Esc         // 取消当前命令
+    - ↑/↓         // 浏览命令历史
+    - 左键        // 选择位置
+    - 右键        // 确认操作
     
     调试命令:
-    - window.czmlEditor.getCzmlData() // 获取CZML数据
-    - window.czmlEditor.exportCzml()  // 导出CZML文件
-    - window.czmlEditor.getStats()    // 获取统计信息
+    - window.czmlEditor.addPoint(lon, lat, height)  // 直接添加点
+    - window.czmlEditor.getCzmlData()               // 获取CZML数据
+    - window.czmlEditor.exportCzml()                // 导出CZML文件
+    - window.czmlEditor.getStats()                  // 获取统计信息
+    - window.czmlEditor.getCommands()               // 获取可用命令
+    - window.czmlEditor.help()                      // 显示帮助
     
     ================================
     `);

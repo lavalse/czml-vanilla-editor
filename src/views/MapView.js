@@ -1,14 +1,17 @@
 /**
  * 地图视图类
  * 负责管理Cesium地图的显示和交互
+ * 支持左键选点和右键确认
  */
 class MapView {
   constructor(containerId) {
     this.containerId = containerId;
     this.viewer = null;
     this.clickHandler = null;
+    this.rightClickHandler = null;
     this.tempEntity = null;
     this.onMapClickCallback = null;
+    this.onRightClickConfirmCallback = null;
     
     this.init();
   }
@@ -26,6 +29,12 @@ class MapView {
       timeline: false,
       shouldAnimate: true,
     });
+
+    // 禁用默认的右键上下文菜单
+    this.viewer.cesiumWidget.canvas.oncontextmenu = function(e) {
+      e.preventDefault();
+      return false;
+    };
 
     console.log('地图视图初始化完成');
   }
@@ -104,6 +113,33 @@ class MapView {
   }
 
   /**
+   * 启用右键确认功能
+   * @param {Function} onRightClickConfirm 右键确认时的回调函数
+   */
+  enableRightClickConfirm(onRightClickConfirm) {
+    this.onRightClickConfirmCallback = onRightClickConfirm;
+
+    // 如果已有右键处理器，先销毁
+    if (this.rightClickHandler) {
+      this.rightClickHandler.destroy();
+    }
+
+    // 创建右键处理器
+    this.rightClickHandler = new Cesium.ScreenSpaceEventHandler(this.viewer.canvas);
+
+    this.rightClickHandler.setInputAction((click) => {
+      // 阻止默认右键菜单
+      click.preventDefault?.();
+      
+      // 调用右键确认回调
+      if (this.onRightClickConfirmCallback) {
+        this.onRightClickConfirmCallback();
+      }
+
+    }, Cesium.ScreenSpaceEventType.RIGHT_CLICK);
+  }
+
+  /**
    * 禁用地图点击功能
    */
   disableMapClick() {
@@ -113,6 +149,17 @@ class MapView {
     }
     this.onMapClickCallback = null;
     this.hideTemporaryPoint();
+  }
+
+  /**
+   * 禁用右键确认功能
+   */
+  disableRightClickConfirm() {
+    if (this.rightClickHandler) {
+      this.rightClickHandler.destroy();
+      this.rightClickHandler = null;
+    }
+    this.onRightClickConfirmCallback = null;
   }
 
   /**
@@ -207,6 +254,9 @@ class MapView {
   destroy() {
     if (this.clickHandler) {
       this.clickHandler.destroy();
+    }
+    if (this.rightClickHandler) {
+      this.rightClickHandler.destroy();
     }
     if (this.viewer) {
       this.viewer.destroy();
