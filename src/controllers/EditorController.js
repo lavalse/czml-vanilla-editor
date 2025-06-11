@@ -79,6 +79,21 @@ class EditorController {
     this.uiView.addListener('inputChange', (value) => {
       this.handleInputChange(value);
     });
+
+    // CZML更新请求
+    this.uiView.addListener('requestCzmlUpdate', () => {
+      this.updateCzmlDisplay();
+    });
+
+    // 导出CZML
+    this.uiView.addListener('exportCzml', () => {
+      this.exportCzml();
+    });
+
+    // 更新CZML数据
+    this.uiView.addListener('updateCzmlData', (czmlData) => {
+      this.updateCzmlData(czmlData);
+    });
   }
 
   /**
@@ -117,6 +132,9 @@ class EditorController {
     // 处理命令结果
     this.handleCommandResult(result);
     
+    // 根据命令结果决定是否清空输入框
+    this.handleInputClearance(result);
+    
     // 更新UI状态
     this.updateCommandInputState();
   }
@@ -147,11 +165,30 @@ class EditorController {
     if (result.updateInput) {
       this.updateCommandInputState();
     }
+  }
 
-    // 如果命令完成，清空输入框并禁用地图交互
+  /**
+   * 处理输入框清空逻辑
+   * @param {Object} result 命令执行结果
+   */
+  handleInputClearance(result) {
+    // 如果命令立即完成（不需要进一步交互），清空输入框
     if (result.success && !result.needsMapClick && !result.needsConfirm) {
-      this.uiView.updateCommandInput('');
+      this.uiView.updateCommandInput('', '输入命令 (例如: AddPoint)');
       this.disableMapInteraction();
+      return;
+    }
+
+    // 如果命令开始等待地图点击，清空输入框但保持命令状态
+    if (result.success && result.needsMapClick && !result.coordString) {
+      this.uiView.updateCommandInput('');
+      return;
+    }
+
+    // 如果命令失败，清空输入框并重置为初始状态
+    if (!result.success) {
+      this.uiView.updateCommandInput('', '输入命令 (例如: AddPoint)');
+      return;
     }
   }
 
@@ -262,6 +299,9 @@ class EditorController {
     // 处理命令结果
     this.handleCommandResult(result);
     
+    // 处理输入框清空
+    this.handleInputClearance(result);
+    
     // 更新UI状态
     this.updateCommandInputState();
   }
@@ -307,13 +347,25 @@ class EditorController {
   updateCommandInputState() {
     const status = this.commandSystem.getCurrentCommandStatus();
     
+    // 调试信息
+    console.log('更新命令状态:', {
+      hasCommand: status.hasCommand,
+      commandName: status.commandName,
+      placeholder: status.placeholder
+    });
+    
     if (status.hasCommand) {
+      // 有活动命令时，使用命令提供的占位符
       this.uiView.updateCommandInput(
         this.uiView.commandInput ? this.uiView.commandInput.value : '',
         status.placeholder
       );
     } else {
-      this.uiView.updateCommandInput('', '输入命令 (例如: AddPoint)');
+      // 没有活动命令时，显示默认占位符
+      this.uiView.updateCommandInput(
+        this.uiView.commandInput ? this.uiView.commandInput.value : '', 
+        '输入命令 (例如: AddPoint)'
+      );
     }
   }
 
@@ -329,7 +381,55 @@ class EditorController {
    */
   updatePointsList() {
     const points = this.czmlModel.getAllPoints();
-    this.uiView.updatePointsList(points);
+    const czmlData = this.czmlModel.getCzmlDocument();
+    this.uiView.updatePointsList(points, czmlData);
+  }
+
+  /**
+   * 更新CZML数据
+   * @param {Array} czmlData 新的CZML数据
+   */
+  updateCzmlData(czmlData) {
+    try {
+      // 验证CZML数据结构
+      if (!Array.isArray(czmlData) || czmlData.length === 0) {
+        throw new Error('CZML数据必须是非空数组');
+      }
+
+      // 验证document包
+      if (!czmlData[0].id || czmlData[0].id !== 'document') {
+        throw new Error('CZML数组的第一个元素必须是document包');
+      }
+
+      // 直接替换模型中的CZML文档
+      this.czmlModel.czmlDocument = [...czmlData];
+      
+      // 重置ID计数器，基于现有数据
+      let maxId = 0;
+      czmlData.forEach(entity => {
+        if (entity.id && entity.id.startsWith('point-')) {
+          const idNum = parseInt(entity.id.replace('point-', ''));
+          if (!isNaN(idNum) && idNum > maxId) {
+            maxId = idNum;
+          }
+        }
+      });
+      this.czmlModel.idCounter = maxId + 1;
+
+      // 通知监听器数据已变化
+      this.czmlModel.notifyListeners();
+
+      this.uiView.addOutput('CZML数据更新成功！', 'success');
+      console.log('CZML数据已更新:', czmlData);
+
+    } catch (error) {
+      console.error('更新CZML数据失败:', error);
+      this.uiView.addOutput(`更新失败: ${error.message}`, 'error');
+    }
+  }
+  updateCzmlDisplay() {
+    const czmlData = this.czmlModel.getCzmlDocument();
+    this.uiView.updateCzmlDisplay(czmlData);
   }
 
   /**

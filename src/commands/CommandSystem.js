@@ -62,7 +62,14 @@ class CommandSystem {
 
     // 如果当前有正在执行的命令，将输入传递给它
     if (this.currentCommand && !this.currentCommand.isCompleted()) {
-      return this.currentCommand.handleInput(input, context);
+      const result = this.currentCommand.handleInput(input, context);
+      
+      // 检查命令是否完成，如果完成则清除当前命令
+      if (this.currentCommand.isCompleted()) {
+        this.currentCommand = null;
+      }
+      
+      return result;
     }
 
     // 解析新命令
@@ -82,17 +89,19 @@ class CommandSystem {
       this.currentCommand = command.execute(args, context);
       this.commandHistory.push(trimmed);
       
+      // 获取初始结果
+      const result = this.currentCommand.getResult();
+      
       // 如果命令立即完成，清除当前命令
       if (this.currentCommand.isCompleted()) {
-        const result = this.currentCommand.getResult();
         this.currentCommand = null;
-        return result;
       }
 
-      return this.currentCommand.getResult();
+      return result;
       
     } catch (error) {
       console.error('命令执行失败:', error);
+      this.currentCommand = null;
       return { success: false, message: '命令执行失败: ' + error.message };
     }
   }
@@ -132,7 +141,14 @@ class CommandSystem {
    */
   handleMapClick(coord) {
     if (this.currentCommand && this.currentCommand.isWaitingForMapClick()) {
-      return this.currentCommand.handleMapClick(coord);
+      const result = this.currentCommand.handleMapClick(coord);
+      
+      // 检查命令是否完成，如果完成则清除当前命令
+      if (this.currentCommand.isCompleted()) {
+        this.currentCommand = null;
+      }
+      
+      return result;
     }
     return { success: false, message: '当前没有命令等待地图点击' };
   }
