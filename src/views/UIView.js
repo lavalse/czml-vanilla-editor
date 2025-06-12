@@ -1,7 +1,7 @@
 /**
  * 用户界面视图类
  * 负责管理编辑器面板的UI元素和交互
- * 更新为Rhino风格的命令行界面
+ * 更新为支持状态栏的命令行界面
  */
 class UIView {
   constructor(panelId) {
@@ -25,37 +25,57 @@ class UIView {
     }
 
     this.createCommandLineUI();
-    console.log('命令行UI视图初始化完成');
+    console.log('带状态栏的命令行UI视图初始化完成');
   }
 
   /**
-   * 创建命令行风格的UI界面
+   * 创建命令行风格的UI界面（包含状态栏）
    */
   createCommandLineUI() {
     this.panel.innerHTML = `
       <div id="editor-header">
         <h3>CZML 编辑器</h3>
-        <div class="version">命令行模式 v1.0</div>
+        <div class="version">新命令系统 v3.0</div>
+      </div>
+      
+      <!-- 状态栏 -->
+      <div id="status-bar">
+        <div class="status-item">
+          <span class="status-label">几何体:</span>
+          <span id="geometries-count">0</span>
+        </div>
+        <div class="status-item">
+          <span class="status-label">命令:</span>
+          <span id="commands-count">0</span>
+        </div>
+        <div class="status-item">
+          <span class="status-label">可撤销:</span>
+          <span id="undo-status">否</span>
+        </div>
+        <div class="status-item">
+          <span class="status-label">可重做:</span>
+          <span id="redo-status">否</span>
+        </div>
       </div>
       
       <div id="command-output">
         <div class="welcome-message">
-          <p>🌍 欢迎使用 CZML 编辑器</p>
+          <p>🌍 欢迎使用 CZML 编辑器 v3.0</p>
           <p>输入 <code>Help</code> 查看可用命令</p>
-          <p>输入 <code>AddPoint</code> 开始添加点</p>
+          <p>使用 <code>Ctrl+Z/Y</code> 撤销/重做操作</p>
         </div>
       </div>
       
       <div id="command-input-container">
         <span class="command-prompt">命令:</span>
-        <input type="text" id="commandInput" placeholder="输入命令 (例如: AddPoint)" autocomplete="off">
+        <input type="text" id="commandInput" placeholder="输入命令 (例如: AddPoint, AddPolyline)" autocomplete="off">
       </div>
       
       <div id="point-list">
         <div class="tab-header">
           <button id="listViewTab" class="tab-button active" data-view="list">
             <span class="tab-icon">📋</span>
-            点列表 <span id="point-count">(0)</span>
+            几何体列表 <span id="point-count">(0)</span>
           </button>
           <button id="czmlViewTab" class="tab-button" data-view="czml">
             <span class="tab-icon">📄</span>
@@ -65,7 +85,7 @@ class UIView {
         
         <div id="list-view" class="tab-content active">
           <div id="points-container">
-            <p class="no-points">暂无点</p>
+            <p class="no-points">暂无几何实体</p>
           </div>
         </div>
         
@@ -89,7 +109,9 @@ class UIView {
                 <li>修改 <code>point.color.rgba</code> 可以改变点的颜色 [R, G, B, A] (0-255)</li>
                 <li>修改 <code>point.pixelSize</code> 可以改变点的大小</li>
                 <li>修改 <code>position.cartographicDegrees</code> 可以改变点的位置 [经度, 纬度, 高度]</li>
-                <li>修改 <code>name</code> 可以改变点的名称</li>
+                <li>修改 <code>polyline.material.solidColor.color.rgba</code> 可以改变线条颜色</li>
+                <li>修改 <code>polyline.width</code> 可以改变线条宽度</li>
+                <li>修改 <code>name</code> 可以改变实体名称</li>
                 <li>请保持JSON格式正确，否则无法保存</li>
               </ul>
             </div>
@@ -98,16 +120,27 @@ class UIView {
       </div>
       
       <div id="quick-help">
-        <h4>快捷键</h4>
-        <div class="help-item"><kbd>Enter</kbd> 执行命令</div>
-        <div class="help-item"><kbd>Esc</kbd> 取消当前命令</div>
-        <div class="help-item"><kbd>↑/↓</kbd> 浏览历史命令</div>
-        <div class="help-item"><kbd>左键</kbd> 选择位置</div>
-        <div class="help-item"><kbd>右键</kbd> 确认操作</div>
+        <h4>快捷键 & 命令</h4>
+        <div class="help-section">
+          <div class="help-group">
+            <strong>键盘快捷键:</strong>
+            <div class="help-item"><kbd>Enter</kbd> 执行命令</div>
+            <div class="help-item"><kbd>Esc</kbd> 取消命令</div>
+            <div class="help-item"><kbd>↑/↓</kbd> 浏览历史</div>
+            <div class="help-item"><kbd>Ctrl+Z</kbd> 撤销</div>
+            <div class="help-item"><kbd>Ctrl+Y</kbd> 重做</div>
+            <div class="help-item"><kbd>Ctrl+H</kbd> 命令历史</div>
+          </div>
+          <div class="help-group">
+            <strong>地图交互:</strong>
+            <div class="help-item"><kbd>左键</kbd> 选择位置</div>
+            <div class="help-item"><kbd>右键</kbd> 确认操作</div>
+          </div>
+        </div>
       </div>
     `;
 
-    // 添加样式
+    // 添加样式（包含状态栏样式）
     this.addCommandLineStyles();
     
     // 绑定事件监听器
@@ -119,7 +152,7 @@ class UIView {
   }
 
   /**
-   * 添加命令行UI样式
+   * 添加命令行UI样式（包含状态栏样式）
    */
   addCommandLineStyles() {
     const style = document.createElement('style');
@@ -138,6 +171,53 @@ class UIView {
       .version {
         font-size: 12px;
         color: #666;
+      }
+      
+      /* 状态栏样式 */
+      #status-bar {
+        display: flex;
+        justify-content: space-between;
+        padding: 8px 12px;
+        background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+        border: 1px solid #dee2e6;
+        border-radius: 6px;
+        margin-bottom: 15px;
+        font-size: 12px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      }
+
+      .status-item {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+      }
+
+      .status-label {
+        color: #6c757d;
+        font-weight: 500;
+      }
+
+      #geometries-count,
+      #commands-count {
+        font-weight: bold;
+        color: #007bff;
+        background-color: rgba(0, 123, 255, 0.1);
+        padding: 2px 6px;
+        border-radius: 12px;
+        min-width: 20px;
+        text-align: center;
+      }
+
+      #undo-status,
+      #redo-status {
+        font-weight: bold;
+        color: #28a745;
+        font-size: 11px;
+      }
+
+      #undo-status.disabled,
+      #redo-status.disabled {
+        color: #6c757d;
       }
       
       #command-output {
@@ -467,6 +547,8 @@ class UIView {
         border-radius: 2px;
         font-size: 11px;
       }
+      
+      #quick-help {
         margin-top: 20px;
         padding-top: 15px;
         border-top: 1px solid #dee2e6;
@@ -476,6 +558,24 @@ class UIView {
         margin: 0 0 10px 0;
         color: #333;
         font-size: 14px;
+      }
+
+      .help-section {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 15px;
+      }
+
+      .help-group {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+
+      .help-group strong {
+        margin-bottom: 6px;
+        color: #495057;
+        font-size: 11px;
       }
       
       .help-item {
@@ -514,6 +614,36 @@ class UIView {
     `;
     
     document.head.appendChild(style);
+  }
+
+  /**
+   * 更新状态栏
+   * @param {Object} stats 统计信息
+   */
+  updateStatusBar(stats) {
+    const geometriesCount = document.getElementById('geometries-count');
+    const commandsCount = document.getElementById('commands-count');
+    const undoStatus = document.getElementById('undo-status');
+    const redoStatus = document.getElementById('redo-status');
+
+    if (geometriesCount) {
+      const totalGeometries = (stats.totalPoints || 0) + (stats.totalPolylines || 0);
+      geometriesCount.textContent = totalGeometries;
+    }
+
+    if (commandsCount) {
+      commandsCount.textContent = stats.commandHistoryLength || 0;
+    }
+
+    if (undoStatus) {
+      undoStatus.textContent = stats.canUndo ? '是' : '否';
+      undoStatus.className = stats.canUndo ? '' : 'disabled';
+    }
+
+    if (redoStatus) {
+      redoStatus.textContent = stats.canRedo ? '是' : '否';
+      redoStatus.className = stats.canRedo ? '' : 'disabled';
+    }
   }
 
   /**
@@ -784,6 +914,7 @@ class UIView {
       }, 2000);
     }
   }
+
   formatJsonDisplay() {
     const codeElement = document.querySelector('#czml-code-display code');
     if (codeElement) {
@@ -930,7 +1061,7 @@ class UIView {
    * @param {string} value 输入值
    * @param {string} placeholder 占位符文本
    */
-  updateCommandInput(value = '', placeholder = '输入命令 (例如: AddPoint)') {
+  updateCommandInput(value = '', placeholder = '输入命令 (例如: AddPoint, AddPolyline)') {
     if (this.commandInput) {
       this.commandInput.value = value;
       this.commandInput.placeholder = placeholder;
@@ -951,11 +1082,6 @@ class UIView {
     }
   }
 
-  /**
-   * 更新点列表显示
-   * @param {Array} points 点数据数组
-   * @param {Array} czmlData 完整的CZML数据
-   */
   /**
    * 更新几何实体列表显示（点和线）
    * @param {Array} geometries 几何实体数据数组
