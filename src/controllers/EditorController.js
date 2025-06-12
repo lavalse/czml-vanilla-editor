@@ -109,7 +109,24 @@ class EditorController {
    * @param {string} command 用户输入的命令
    */
   handleCommand(command) {
-    if (!command.trim()) return;
+    if (!command.trim()) {
+      // 空输入，检查是否有活动命令需要处理
+      const commandStatus = this.commandSystem.getCurrentCommandStatus();
+      if (commandStatus.hasCommand) {
+        // 有活动命令时，空输入可能表示完成操作
+        const context = {
+          czmlModel: this.czmlModel,
+          mapView: this.mapView,
+          uiView: this.uiView
+        };
+        
+        const result = this.commandSystem.parseAndExecute('', context);
+        this.handleCommandResult(result);
+        this.handleInputClearance(result);
+        this.updateCommandInputState();
+      }
+      return;
+    }
 
     // 显示用户输入的命令
     this.uiView.addOutput(`> ${command}`, 'command');
@@ -174,7 +191,7 @@ class EditorController {
   handleInputClearance(result) {
     // 如果命令立即完成（不需要进一步交互），清空输入框
     if (result.success && !result.needsMapClick && !result.needsConfirm) {
-      this.uiView.updateCommandInput('', '输入命令 (例如: AddPoint)');
+      this.uiView.updateCommandInput('', '输入命令 (例如: AddPoint, AddPolyline)');
       this.disableMapInteraction();
       return;
     }
@@ -187,7 +204,7 @@ class EditorController {
 
     // 如果命令失败，清空输入框并重置为初始状态
     if (!result.success) {
-      this.uiView.updateCommandInput('', '输入命令 (例如: AddPoint)');
+      this.uiView.updateCommandInput('', '输入命令 (例如: AddPoint, AddPolyline)');
       return;
     }
   }
@@ -206,9 +223,10 @@ class EditorController {
     this.uiView.updateCommandInput('');
     this.updateCommandInputState();
     
-    // 禁用地图交互并隐藏临时点
+    // 禁用地图交互并隐藏临时点和线
     this.disableMapInteraction();
     this.mapView.hideTemporaryPoint();
+    this.mapView.hideTemporaryPolyline(); // 新增：隐藏临时polyline
   }
 
   /**
@@ -270,31 +288,30 @@ class EditorController {
    * 处理右键确认
    */
   handleRightClickConfirm() {
+    console.log('右键确认被触发');
+    
     // 检查是否有活动命令
     const commandStatus = this.commandSystem.getCurrentCommandStatus();
     if (!commandStatus.hasCommand) {
+      this.uiView.addOutput('右键确认：当前没有活动命令', 'info');
       return;
     }
 
-    // 获取当前输入框的值
-    const currentInput = this.uiView.commandInput ? this.uiView.commandInput.value : '';
-    
-    if (!currentInput.trim()) {
-      this.uiView.addOutput('右键确认：没有可执行的内容', 'info');
-      return;
-    }
+    console.log('当前活动命令:', commandStatus.commandName);
 
     // 显示右键确认的执行信息
-    this.uiView.addOutput(`> ${currentInput} (右键确认)`, 'command');
+    this.uiView.addOutput('> 右键确认完成绘制', 'command');
     
-    // 执行命令
+    // 执行空命令（表示完成），注意这里传递空字符串而不是空输入
     const context = {
       czmlModel: this.czmlModel,
       mapView: this.mapView,
       uiView: this.uiView
     };
 
-    const result = this.commandSystem.parseAndExecute(currentInput, context);
+    const result = this.commandSystem.parseAndExecute('', context);
+    
+    console.log('右键确认命令结果:', result);
     
     // 处理命令结果
     this.handleCommandResult(result);
@@ -328,13 +345,16 @@ class EditorController {
     const result = this.commandSystem.handleMapClick(coord);
     
     if (result.success) {
-      // 显示临时预览点（每次点击都更新预览点位置）
-      this.mapView.showTemporaryPoint(coord);
+      // 对于AddPoint命令，显示临时预览点
+      if (commandStatus.commandName === 'AddPointCommandHandler') {
+        this.mapView.showTemporaryPoint(coord);
+      }
+      // 对于AddPolyline命令，MapView会自动处理临时预览
       
       // 处理命令结果
       this.handleCommandResult(result);
       
-      // 强制更新输入状态，确保占位符反映当前坐标
+      // 强制更新输入状态，确保占位符反映当前状态
       this.updateCommandInputState();
     } else {
       this.uiView.addOutput(result.message || '地图点击处理失败', 'error');
@@ -364,7 +384,7 @@ class EditorController {
       // 没有活动命令时，显示默认占位符
       this.uiView.updateCommandInput(
         this.uiView.commandInput ? this.uiView.commandInput.value : '', 
-        '输入命令 (例如: AddPoint)'
+        '输入命令 (例如: AddPoint, AddPolyline)'
       );
     }
   }
@@ -381,8 +401,12 @@ class EditorController {
    */
   updatePointsList() {
     const points = this.czmlModel.getAllPoints();
+    const polylines = this.czmlModel.getAllPolylines(); // 新增：获取polyline
+    const allGeometries = this.czmlModel.getAllGeometries(); // 新增：获取所有几何实体
     const czmlData = this.czmlModel.getCzmlDocument();
-    this.uiView.updatePointsList(points, czmlData);
+    
+    // 更新显示，传入所有几何实体
+    this.uiView.updatePointsList(allGeometries, czmlData);
   }
 
   /**
@@ -405,16 +429,25 @@ class EditorController {
       this.czmlModel.czmlDocument = [...czmlData];
       
       // 重置ID计数器，基于现有数据
-      let maxId = 0;
+      let maxPointId = 0;
+      let maxPolylineId = 0;
+      
       czmlData.forEach(entity => {
         if (entity.id && entity.id.startsWith('point-')) {
           const idNum = parseInt(entity.id.replace('point-', ''));
-          if (!isNaN(idNum) && idNum > maxId) {
-            maxId = idNum;
+          if (!isNaN(idNum) && idNum > maxPointId) {
+            maxPointId = idNum;
+          }
+        } else if (entity.id && entity.id.startsWith('polyline-')) {
+          const idNum = parseInt(entity.id.replace('polyline-', ''));
+          if (!isNaN(idNum) && idNum > maxPolylineId) {
+            maxPolylineId = idNum;
           }
         }
       });
-      this.czmlModel.idCounter = maxId + 1;
+      
+      this.czmlModel.idCounter = maxPointId + 1;
+      this.czmlModel.polylineIdCounter = maxPolylineId + 1;
 
       // 通知监听器数据已变化
       this.czmlModel.notifyListeners();
@@ -427,6 +460,7 @@ class EditorController {
       this.uiView.addOutput(`更新失败: ${error.message}`, 'error');
     }
   }
+
   updateCzmlDisplay() {
     const czmlData = this.czmlModel.getCzmlDocument();
     this.uiView.updateCzmlDisplay(czmlData);
@@ -477,12 +511,15 @@ class EditorController {
   loadCzmlData(czmlData) {
     try {
       // 清除现有数据
-      this.czmlModel.clearAllPoints();
+      this.czmlModel.clearAllGeometries(); // 更新：清除所有几何实体
       
-      // 遍历CZML数据，添加点
+      // 遍历CZML数据，添加实体
       if (Array.isArray(czmlData)) {
-        let loadedCount = 0;
+        let loadedPointCount = 0;
+        let loadedPolylineCount = 0;
+        
         czmlData.forEach(entity => {
+          // 处理点实体
           if (entity.position && entity.point && entity.id !== 'document') {
             const coords = entity.position.cartographicDegrees;
             if (coords && coords.length >= 3) {
@@ -491,12 +528,31 @@ class EditorController {
                 lat: coords[1],
                 height: coords[2]
               });
-              loadedCount++;
+              loadedPointCount++;
+            }
+          }
+          // 处理polyline实体
+          else if (entity.polyline && entity.polyline.positions && entity.id !== 'document') {
+            const cartographicDegrees = entity.polyline.positions.cartographicDegrees;
+            if (cartographicDegrees && cartographicDegrees.length >= 6) { // 至少2个点
+              const coordinates = [];
+              for (let i = 0; i < cartographicDegrees.length; i += 3) {
+                coordinates.push({
+                  lon: cartographicDegrees[i],
+                  lat: cartographicDegrees[i + 1],
+                  height: cartographicDegrees[i + 2]
+                });
+              }
+              this.czmlModel.addPolyline(coordinates);
+              loadedPolylineCount++;
             }
           }
         });
         
-        this.uiView.addOutput(`CZML数据加载成功！加载了 ${loadedCount} 个点`, 'success');
+        this.uiView.addOutput(
+          `CZML数据加载成功！加载了 ${loadedPointCount} 个点和 ${loadedPolylineCount} 条线`, 
+          'success'
+        );
       }
       
       console.log('CZML数据加载成功');
@@ -513,10 +569,13 @@ class EditorController {
    */
   getStatistics() {
     const points = this.czmlModel.getAllPoints();
+    const polylines = this.czmlModel.getAllPolylines();
     const commandStatus = this.commandSystem.getCurrentCommandStatus();
     
     return {
       totalPoints: points.length,
+      totalPolylines: polylines.length, // 新增
+      totalGeometries: points.length + polylines.length, // 新增
       czmlSize: JSON.stringify(this.getCzmlData()).length,
       hasActiveCommand: commandStatus.hasCommand,
       activeCommand: commandStatus.commandName || null,

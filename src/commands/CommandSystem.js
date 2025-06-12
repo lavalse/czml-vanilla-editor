@@ -23,8 +23,15 @@ class CommandSystem {
       }
     });
 
+    this.registerCommand('AddPolyline', {
+      description: '添加折线到地图',
+      execute: (args, context) => {
+        return new AddPolylineCommandHandler(args, context);
+      }
+    });
+
     this.registerCommand('Clear', {
-      description: '清除所有点',
+      description: '清除所有几何实体（点和线）',
       execute: (args, context) => {
         return new ClearCommandHandler(args, context);
       }
@@ -56,16 +63,23 @@ class CommandSystem {
   parseAndExecute(input, context) {
     const trimmed = input.trim();
     
-    if (!trimmed) {
+    console.log('CommandSystem.parseAndExecute:', { input, trimmed, hasCurrentCommand: !!this.currentCommand });
+    
+    if (!trimmed && !this.currentCommand) {
       return { success: false, message: '请输入命令' };
     }
 
     // 如果当前有正在执行的命令，将输入传递给它
     if (this.currentCommand && !this.currentCommand.isCompleted()) {
+      console.log('传递输入给当前命令:', this.currentCommand.constructor.name);
       const result = this.currentCommand.handleInput(input, context);
+      
+      console.log('命令处理结果:', result);
+      console.log('命令是否完成:', this.currentCommand.isCompleted());
       
       // 检查命令是否完成，如果完成则清除当前命令
       if (this.currentCommand.isCompleted()) {
+        console.log('命令已完成，清除当前命令');
         this.currentCommand = null;
       }
       
@@ -92,8 +106,12 @@ class CommandSystem {
       // 获取初始结果
       const result = this.currentCommand.getResult();
       
+      console.log('新命令初始结果:', result);
+      console.log('新命令是否完成:', this.currentCommand.isCompleted());
+      
       // 如果命令立即完成，清除当前命令
       if (this.currentCommand.isCompleted()) {
+        console.log('新命令立即完成，清除当前命令');
         this.currentCommand = null;
       }
 
@@ -124,7 +142,7 @@ class CommandSystem {
    */
   getCurrentCommandStatus() {
     if (!this.currentCommand) {
-      return { hasCommand: false, placeholder: '输入命令 (例如: AddPoint)' };
+      return { hasCommand: false, placeholder: '输入命令 (例如: AddPoint, AddPolyline)' };
     }
 
     return {
@@ -234,11 +252,11 @@ class CommandHandler {
    */
   cancel() {
     this.cancelled = true;
-    this.waitingForMapClick = false;  // 取消时停止等待地图点击
+    this.waitingForMapClick = false;
     this.result = { 
       success: true, 
       message: '命令已取消',
-      needsMapClick: false  // 确保不再需要地图交互
+      needsMapClick: false
     };
   }
 }
@@ -282,7 +300,6 @@ class AddPointCommandHandler extends CommandHandler {
 
   handleMapClick(coord) {
     this.currentCoord = coord;
-    // 保持等待状态，允许用户继续点击更新位置
     this.waitingForMapClick = true;
     
     return {
@@ -290,7 +307,7 @@ class AddPointCommandHandler extends CommandHandler {
       message: `已选择位置: ${coord.lon.toFixed(6)}, ${coord.lat.toFixed(6)}, ${coord.height.toFixed(2)}m (可继续点击更新位置或按回车确认)`,
       coordString: `${coord.lon.toFixed(6)},${coord.lat.toFixed(6)},${coord.height.toFixed(2)}`,
       needsConfirm: true,
-      updateInput: true  // 新增标记，表示需要更新输入框
+      updateInput: true
     };
   }
 
@@ -298,12 +315,12 @@ class AddPointCommandHandler extends CommandHandler {
     try {
       const pointId = context.czmlModel.addPoint(coord);
       this.completed = true;
-      this.waitingForMapClick = false;  // 完成后停止等待地图点击
+      this.waitingForMapClick = false;
       this.result = {
         success: true,
         message: `点添加成功: ${pointId}`,
         pointId: pointId,
-        needsMapClick: false  // 命令完成，不再需要地图交互
+        needsMapClick: false
       };
       return this.result;
     } catch (error) {
@@ -347,6 +364,196 @@ class AddPointCommandHandler extends CommandHandler {
 }
 
 /**
+ * AddPolyline命令处理器
+ * 支持多点连续输入和临时预览
+ */
+class AddPolylineCommandHandler extends CommandHandler {
+  constructor(args, context) {
+    super(args, context);
+    this.coordinates = []; // 收集的坐标点
+    this.waitingForMapClick = true;
+    
+    this.result = {
+      success: true,
+      message: '开始绘制折线：点击地图添加点 (至少需要2个点，按回车或右键完成)',
+      needsMapClick: true
+    };
+  }
+
+  handleInput(input, context) {
+    const trimmed = input.trim();
+    
+    console.log('AddPolylineCommandHandler.handleInput:', { input, trimmed, coordinatesLength: this.coordinates.length });
+    
+    // 检查是否是坐标输入
+    if (this.isCoordinateInput(trimmed)) {
+      const coord = this.parseCoordinate(trimmed);
+      if (coord) {
+        return this.addCoordinatePoint(coord, context);
+      } else {
+        return { success: false, message: '坐标格式错误，请使用: lon,lat,height' };
+      }
+    }
+    
+    // 空输入表示完成绘制
+    if (trimmed === '' || input === '') {
+      console.log('空输入，尝试完成绘制');
+      return this.finishPolyline(context);
+    }
+    
+    return { 
+      success: false, 
+      message: `请继续点击地图添加点 (当前${this.coordinates.length}个点)，或按回车完成绘制` 
+    };
+  }
+
+  handleMapClick(coord) {
+    // 添加坐标点
+    this.coordinates.push(coord);
+    
+    // 更新临时预览（通过mapView显示）
+    if (this.context.mapView && this.context.mapView.updateTemporaryPolyline) {
+      this.context.mapView.updateTemporaryPolyline(this.coordinates);
+    }
+    
+    const pointCount = this.coordinates.length;
+    let message = `已添加第${pointCount}个点: ${coord.lon.toFixed(6)}, ${coord.lat.toFixed(6)}, ${coord.height.toFixed(2)}m`;
+    
+    if (pointCount === 1) {
+      message += ' (继续点击添加点，至少需要2个点)';
+    } else if (pointCount >= 2) {
+      message += ' (可按回车或右键完成，或继续添加点)';
+    }
+    
+    // 生成当前坐标列表字符串
+    const coordStrings = this.coordinates.map(c => 
+      `${c.lon.toFixed(6)},${c.lat.toFixed(6)},${c.height.toFixed(2)}`
+    );
+    
+    return {
+      success: true,
+      message: message,
+      coordString: coordStrings.join('; '), // 多个坐标用分号分隔
+      needsConfirm: pointCount >= 2,
+      updateInput: true,
+      needsMapClick: true // 继续等待更多点击
+    };
+  }
+
+  addCoordinatePoint(coord, context) {
+    this.coordinates.push(coord);
+    
+    // 更新临时预览
+    if (context.mapView && context.mapView.updateTemporaryPolyline) {
+      context.mapView.updateTemporaryPolyline(this.coordinates);
+    }
+    
+    const pointCount = this.coordinates.length;
+    let message = `通过坐标添加第${pointCount}个点`;
+    
+    if (pointCount >= 2) {
+      message += ' (可按回车完成，或继续添加点)';
+    }
+    
+    return {
+      success: true,
+      message: message,
+      needsMapClick: true, // 继续等待点击
+      needsConfirm: pointCount >= 2
+    };
+  }
+
+  finishPolyline(context) {
+    console.log('finishPolyline被调用，当前坐标数量:', this.coordinates.length);
+    
+    if (this.coordinates.length < 2) {
+      return {
+        success: false,
+        message: `折线至少需要2个点，当前只有${this.coordinates.length}个点`
+      };
+    }
+    
+    try {
+      const polylineId = context.czmlModel.addPolyline(this.coordinates);
+      
+      // 清除临时预览
+      if (context.mapView && context.mapView.hideTemporaryPolyline) {
+        context.mapView.hideTemporaryPolyline();
+      }
+      
+      this.completed = true;
+      this.waitingForMapClick = false;
+      this.result = {
+        success: true,
+        message: `折线创建成功: ${polylineId} (${this.coordinates.length}个点)`,
+        polylineId: polylineId,
+        needsMapClick: false,
+        needsConfirm: false
+      };
+      
+      console.log('折线创建成功:', this.result);
+      return this.result;
+      
+    } catch (error) {
+      console.error('创建折线失败:', error);
+      this.completed = true;
+      this.waitingForMapClick = false;
+      this.result = {
+        success: false,
+        message: `创建折线失败: ${error.message}`,
+        needsMapClick: false,
+        needsConfirm: false
+      };
+      return this.result;
+    }
+  }
+
+  getPlaceholder() {
+    const pointCount = this.coordinates.length;
+    
+    if (pointCount === 0) {
+      return '左键点击地图开始绘制折线';
+    } else if (pointCount === 1) {
+      return '继续点击地图添加第2个点 (至少需要2个点)';
+    } else {
+      return `已有${pointCount}个点，按回车完成或继续添加点`;
+    }
+  }
+
+  cancel() {
+    // 清除临时预览
+    if (this.context.mapView && this.context.mapView.hideTemporaryPolyline) {
+      this.context.mapView.hideTemporaryPolyline();
+    }
+    
+    // 调用父类取消方法
+    super.cancel();
+    
+    this.result.message = `折线绘制已取消 (已收集${this.coordinates.length}个点)`;
+  }
+
+  isCoordinateInput(input) {
+    return /^-?\d+\.?\d*,-?\d+\.?\d*,-?\d+\.?\d*$/.test(input);
+  }
+
+  parseCoordinate(input) {
+    try {
+      const parts = input.split(',').map(s => parseFloat(s.trim()));
+      if (parts.length === 3 && parts.every(p => !isNaN(p))) {
+        return {
+          lon: parts[0],
+          lat: parts[1],
+          height: parts[2]
+        };
+      }
+    } catch (error) {
+      console.error('坐标解析失败:', error);
+    }
+    return null;
+  }
+}
+
+/**
  * Clear命令处理器
  */
 class ClearCommandHandler extends CommandHandler {
@@ -354,11 +561,19 @@ class ClearCommandHandler extends CommandHandler {
     super(args, context);
     
     try {
-      context.czmlModel.clearAllPoints();
+      // 清除所有几何实体（点和线）
+      context.czmlModel.clearAllGeometries();
+      
+      // 清除地图上的临时预览
+      if (context.mapView) {
+        context.mapView.hideTemporaryPoint();
+        context.mapView.hideTemporaryPolyline();
+      }
+      
       this.completed = true;
       this.result = {
         success: true,
-        message: '所有点已清除'
+        message: '所有几何实体已清除（点和线）'
       };
     } catch (error) {
       this.completed = true;

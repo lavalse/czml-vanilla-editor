@@ -10,6 +10,7 @@ class CzmlModel {
     ];
     
     this.idCounter = 1;
+    this.polylineIdCounter = 1; // 新增：polyline ID计数器
     this.listeners = []; // 数据变化监听器
   }
 
@@ -55,6 +56,60 @@ class CzmlModel {
   }
 
   /**
+   * 添加polyline到CZML文档
+   * @param {Array} coordinates 坐标数组，每个元素为 {lon, lat, height}
+   * @param {Object} options 可选的样式参数
+   * @returns {string} 新增polyline的ID
+   */
+  addPolyline(coordinates, options = {}) {
+    if (!coordinates || coordinates.length < 2) {
+      throw new Error('Polyline至少需要2个点');
+    }
+
+    const polylineId = `polyline-${this.polylineIdCounter++}`;
+    
+    // 将坐标转换为CZML格式 [lon1, lat1, height1, lon2, lat2, height2, ...]
+    const cartographicDegrees = [];
+    coordinates.forEach(coord => {
+      cartographicDegrees.push(coord.lon, coord.lat, coord.height);
+    });
+
+    const defaultOptions = {
+      width: 3,
+      color: [0, 255, 255, 255], // 青色 RGBA
+      clampToGround: true
+    };
+
+    const finalOptions = { ...defaultOptions, ...options };
+
+    const polylineData = {
+      id: polylineId,
+      name: `Polyline (${coordinates.length} points)`,
+      polyline: {
+        positions: {
+          cartographicDegrees: cartographicDegrees
+        },
+        width: finalOptions.width,
+        material: {
+          solidColor: {
+            color: {
+              rgba: finalOptions.color
+            }
+          }
+        },
+        clampToGround: finalOptions.clampToGround
+      }
+    };
+
+    console.log('创建polyline数据:', JSON.stringify(polylineData, null, 2));
+
+    this.czmlDocument.push(polylineData);
+    this.notifyListeners(); // 通知视图更新
+    
+    return polylineId;
+  }
+
+  /**
    * 获取完整的CZML文档
    * @returns {Array} CZML文档数组
    */
@@ -80,10 +135,46 @@ class CzmlModel {
   }
 
   /**
+   * 获取所有polyline实体
+   * @returns {Array} 所有polyline实体的数组
+   */
+  getAllPolylines() {
+    return this.czmlDocument.filter(entity => entity.id.startsWith('polyline-'));
+  }
+
+  /**
+   * 获取所有几何实体（点和线）
+   * @returns {Array} 所有几何实体的数组
+   */
+  getAllGeometries() {
+    return this.czmlDocument.filter(entity => 
+      entity.id.startsWith('point-') || entity.id.startsWith('polyline-')
+    );
+  }
+
+  /**
    * 清除所有点
    */
   clearAllPoints() {
     this.czmlDocument = this.czmlDocument.filter(entity => !entity.id.startsWith('point-'));
+    this.notifyListeners();
+  }
+
+  /**
+   * 清除所有polyline
+   */
+  clearAllPolylines() {
+    this.czmlDocument = this.czmlDocument.filter(entity => !entity.id.startsWith('polyline-'));
+    this.notifyListeners();
+  }
+
+  /**
+   * 清除所有几何实体（点和线）
+   */
+  clearAllGeometries() {
+    this.czmlDocument = this.czmlDocument.filter(entity => 
+      !entity.id.startsWith('point-') && !entity.id.startsWith('polyline-')
+    );
     this.notifyListeners();
   }
 }

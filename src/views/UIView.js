@@ -956,32 +956,68 @@ class UIView {
    * @param {Array} points 点数据数组
    * @param {Array} czmlData 完整的CZML数据
    */
-  updatePointsList(points, czmlData = null) {
+  /**
+   * 更新几何实体列表显示（点和线）
+   * @param {Array} geometries 几何实体数据数组
+   * @param {Array} czmlData 完整的CZML数据
+   */
+  updatePointsList(geometries, czmlData = null) {
     const container = document.getElementById('points-container');
     const countElement = document.getElementById('point-count');
     
     if (!container || !countElement) return;
 
     // 更新计数
-    countElement.textContent = `(${points ? points.length : 0})`;
+    countElement.textContent = `(${geometries ? geometries.length : 0})`;
 
-    // 更新点列表视图
-    if (!points || points.length === 0) {
-      container.innerHTML = '<p class="no-points">暂无点</p>';
+    // 更新几何实体列表视图
+    if (!geometries || geometries.length === 0) {
+      container.innerHTML = '<p class="no-points">暂无几何实体</p>';
     } else {
       let html = '';
-      points.forEach((point, index) => {
-        const coords = point.position.cartographicDegrees;
-        html += `
-          <div class="point-item">
-            <div class="point-name">${point.name} #${index + 1}</div>
-            <div class="point-coords">
-              经度: ${coords[0].toFixed(6)}<br>
-              纬度: ${coords[1].toFixed(6)}<br>
-              高度: ${coords[2].toFixed(2)}m
+      geometries.forEach((entity, index) => {
+        // 处理点实体
+        if (entity.position && entity.point) {
+          const coords = entity.position.cartographicDegrees;
+          html += `
+            <div class="point-item">
+              <div class="point-name">📍 ${entity.name} #${index + 1}</div>
+              <div class="point-coords">
+                经度: ${coords[0].toFixed(6)}<br>
+                纬度: ${coords[1].toFixed(6)}<br>
+                高度: ${coords[2].toFixed(2)}m
+              </div>
             </div>
-          </div>
-        `;
+          `;
+        }
+        // 处理polyline实体
+        else if (entity.polyline && entity.polyline.positions && entity.polyline.positions.cartographicDegrees) {
+          const cartographicDegrees = entity.polyline.positions.cartographicDegrees;
+          const pointCount = cartographicDegrees.length / 3;
+          
+          // 显示polyline的第一个和最后一个点
+          const firstPoint = {
+            lon: cartographicDegrees[0],
+            lat: cartographicDegrees[1],
+            height: cartographicDegrees[2]
+          };
+          const lastPoint = {
+            lon: cartographicDegrees[cartographicDegrees.length - 3],
+            lat: cartographicDegrees[cartographicDegrees.length - 2],
+            height: cartographicDegrees[cartographicDegrees.length - 1]
+          };
+          
+          html += `
+            <div class="point-item" style="border-left-color: #00ffff;">
+              <div class="point-name">📏 ${entity.name} #${index + 1}</div>
+              <div class="point-coords">
+                点数: ${pointCount}<br>
+                起点: ${firstPoint.lon.toFixed(3)}, ${firstPoint.lat.toFixed(3)}<br>
+                终点: ${lastPoint.lon.toFixed(3)}, ${lastPoint.lat.toFixed(3)}
+              </div>
+            </div>
+          `;
+        }
       });
       container.innerHTML = html;
     }
