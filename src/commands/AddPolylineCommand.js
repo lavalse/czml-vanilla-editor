@@ -2,7 +2,7 @@ import { Command, CommandHandler, CommandFactory } from './base/CommandBase.js';
 import GeometryUtils from '../utils/GeometryUtils.js';
 
 /**
- * 添加折线的具体命令
+ * 添加折线的具体命令 - 紧凑ID版本
  * 负责实际的数据操作，支持撤销
  */
 export class AddPolylineCommand extends Command {
@@ -12,6 +12,7 @@ export class AddPolylineCommand extends Command {
     this.czmlModel = czmlModel;
     this.coordinates = [...coordinates]; // 复制数组避免外部修改
     this.polylineId = null;
+    this.polylineName = null; // 新增：保存折线名称
   }
 
   /**
@@ -29,10 +30,19 @@ export class AddPolylineCommand extends Command {
         throw new Error('折线数据无效');
       }
 
+      // 使用新的addPolyline方法，它会自动生成紧凑ID
       this.polylineId = this.czmlModel.addPolyline(this.coordinates);
+      
+      // 获取生成的折线信息
+      const polylineEntity = this.czmlModel.getEntityById(this.polylineId);
+      this.polylineName = polylineEntity ? polylineEntity.name : `Polyline-${this.polylineId}`;
+      
+      // 更新命令描述以包含生成的折线名称
+      this.description = `添加折线: ${this.polylineName}`;
+      
       this.executed = true;
       
-      console.log(`AddPolylineCommand executed: ${this.polylineId} with ${this.coordinates.length} points`);
+      console.log(`AddPolylineCommand executed: ${this.polylineName} (ID: ${this.polylineId}) with ${this.coordinates.length} points`);
       return true;
       
     } catch (error) {
@@ -52,16 +62,12 @@ export class AddPolylineCommand extends Command {
         return false;
       }
 
-      // 从CZML文档中移除折线
-      const czmlDoc = this.czmlModel.czmlDocument;
-      const index = czmlDoc.findIndex(entity => entity.id === this.polylineId);
+      // 使用新的removeEntityById方法
+      const success = this.czmlModel.removeEntityById(this.polylineId);
       
-      if (index > 0) {
-        czmlDoc.splice(index, 1);
-        this.czmlModel.notifyListeners();
+      if (success) {
         this.executed = false;
-        
-        console.log(`AddPolylineCommand undone: ${this.polylineId}`);
+        console.log(`AddPolylineCommand undone: ${this.polylineName} (ID: ${this.polylineId})`);
         return true;
       }
       
@@ -87,6 +93,14 @@ export class AddPolylineCommand extends Command {
    */
   getPolylineId() {
     return this.polylineId;
+  }
+
+  /**
+   * 获取创建的折线名称
+   * @returns {string|null} 折线名称
+   */
+  getPolylineName() {
+    return this.polylineName;
   }
 
   /**
@@ -297,7 +311,7 @@ export class AddPolylineCommandHandler extends CommandHandler {
  */
 export class AddPolylineCommandFactory extends CommandFactory {
   constructor() {
-    super('AddPolyline', '添加折线到地图');
+    super('AddPolyline', '添加折线到地图 (使用紧凑ID格式)');
   }
 
   /**

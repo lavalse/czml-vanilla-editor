@@ -2,16 +2,19 @@ import { Command, CommandHandler, CommandFactory } from './base/CommandBase.js';
 import GeometryUtils from '../utils/GeometryUtils.js';
 
 /**
- * 添加点的具体命令
+ * 添加点的具体命令 - 紧凑ID版本
  * 负责实际的数据操作，支持撤销
  */
 export class AddPointCommand extends Command {
   constructor(czmlModel, coordinate) {
-    super('AddPoint', `添加点 (${coordinate.lon.toFixed(6)}, ${coordinate.lat.toFixed(6)})`);
+    // 生成更有意义的描述
+    const shortCoord = `${coordinate.lon.toFixed(3)}, ${coordinate.lat.toFixed(3)}`;
+    super('AddPoint', `添加点 (${shortCoord})`);
     
     this.czmlModel = czmlModel;
     this.coordinate = coordinate;
     this.pointId = null;
+    this.pointName = null; // 新增：保存点名称
   }
 
   /**
@@ -29,10 +32,19 @@ export class AddPointCommand extends Command {
         throw new Error('坐标数据无效');
       }
 
+      // 使用新的addPoint方法，它会自动生成紧凑ID
       this.pointId = this.czmlModel.addPoint(this.coordinate);
+      
+      // 获取生成的点信息
+      const pointEntity = this.czmlModel.getEntityById(this.pointId);
+      this.pointName = pointEntity ? pointEntity.name : `Point-${this.pointId}`;
+      
+      // 更新命令描述以包含生成的点名称
+      this.description = `添加点: ${this.pointName}`;
+      
       this.executed = true;
       
-      console.log(`AddPointCommand executed: ${this.pointId}`);
+      console.log(`AddPointCommand executed: ${this.pointName} (ID: ${this.pointId})`);
       return true;
       
     } catch (error) {
@@ -52,16 +64,12 @@ export class AddPointCommand extends Command {
         return false;
       }
 
-      // 从CZML文档中移除点
-      const czmlDoc = this.czmlModel.czmlDocument;
-      const index = czmlDoc.findIndex(entity => entity.id === this.pointId);
+      // 使用新的removeEntityById方法
+      const success = this.czmlModel.removeEntityById(this.pointId);
       
-      if (index > 0) {
-        czmlDoc.splice(index, 1);
-        this.czmlModel.notifyListeners();
+      if (success) {
         this.executed = false;
-        
-        console.log(`AddPointCommand undone: ${this.pointId}`);
+        console.log(`AddPointCommand undone: ${this.pointName} (ID: ${this.pointId})`);
         return true;
       }
       
@@ -87,6 +95,14 @@ export class AddPointCommand extends Command {
    */
   getPointId() {
     return this.pointId;
+  }
+
+  /**
+   * 获取创建的点名称
+   * @returns {string|null} 点名称
+   */
+  getPointName() {
+    return this.pointName;
   }
 }
 
@@ -218,7 +234,7 @@ export class AddPointCommandHandler extends CommandHandler {
  */
 export class AddPointCommandFactory extends CommandFactory {
   constructor() {
-    super('AddPoint', '添加点到地图');
+    super('AddPoint', '添加点到地图 (使用紧凑ID格式)');
   }
 
   /**
