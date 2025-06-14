@@ -1,8 +1,8 @@
-import { Command, CommandHandler, CommandFactory } from './base/CommandBase.js';
+import { Command, CommandHandler, CommandFactory, ConfirmationState, ConfirmationMethod } from './base/CommandBase.js';
 import GeometryUtils from '../utils/GeometryUtils.js';
 
 /**
- * 添加点的具体命令 - 紧凑ID版本
+ * 添加点的具体命令 - 紧凑ID版本（保持不变）
  * 负责实际的数据操作，支持撤销
  */
 export class AddPointCommand extends Command {
@@ -107,13 +107,13 @@ export class AddPointCommand extends Command {
 }
 
 /**
- * AddPoint命令处理器
+ * 🔧 修复：AddPoint命令处理器 - 正确区分新输入和确认操作
  * 负责收集用户输入（坐标），然后创建AddPointCommand
  */
 export class AddPointCommandHandler extends CommandHandler {
   constructor(context) {
     super('AddPoint', context);
-    this.currentCoord = null;
+    this.currentCoord = null; // 当前选择的坐标
   }
 
   /**
@@ -132,20 +132,18 @@ export class AddPointCommandHandler extends CommandHandler {
   }
 
   /**
-   * 处理用户输入
+   * 🔧 重构：处理特定命令的输入
    * @param {string} input 用户输入
    * @returns {Object} 处理结果
    */
-  handleInput(input) {
-    const trimmed = input.trim();
-    
-    console.log('AddPointCommandHandler.handleInput:', trimmed);
+  handleSpecificInput(input) {
+    console.log('AddPointCommandHandler.handleSpecificInput:', input);
     
     // 检查是否是坐标输入
-    if (GeometryUtils.isCoordinateInput(trimmed)) {
-      const coord = GeometryUtils.parseCoordinate(trimmed);
+    if (GeometryUtils.isCoordinateInput(input)) {
+      const coord = GeometryUtils.parseCoordinate(input);
       if (coord) {
-        return this.finish(coord);
+        return this.selectCoordinate(coord);
       } else {
         return { 
           success: false, 
@@ -154,16 +152,71 @@ export class AddPointCommandHandler extends CommandHandler {
       }
     }
     
-    // 如果有当前坐标，空输入表示确认
-    if (this.currentCoord && trimmed === '') {
-      return this.finish(this.currentCoord);
-    }
-    
     return { 
       success: false, 
-      message: '请先点击地图选择位置或输入坐标' 
+      message: '请先点击地图选择位置或输入坐标 (格式: lon,lat,height)' 
     };
   }
+
+  /**
+   * 🔧 关键修复：处理确认状态下的输入
+   * @param {string} input 用户输入
+   * @returns {Object} 处理结果
+   */
+  handleConfirmationInput(input) {
+  console.log('AddPointCommandHandler.handleConfirmationInput:', input);
+  
+  // 🔧 关键修复：检查输入的坐标是否与当前坐标相同
+  if (GeometryUtils.isCoordinateInput(input)) {
+    const inputCoord = GeometryUtils.parseCoordinate(input);
+    if (inputCoord && this.currentCoord) {
+      
+      // 🔧 重要修复：使用更宽松的精度比较
+      // 因为输入框中的坐标是从 coordString 格式化而来，可能有精度差异
+      const lonDiff = Math.abs(inputCoord.lon - this.currentCoord.lon);
+      const latDiff = Math.abs(inputCoord.lat - this.currentCoord.lat);
+      const heightDiff = Math.abs(inputCoord.height - this.currentCoord.height);
+      
+      // 更宽松的比较阈值
+      const isSameCoordinate = (
+        lonDiff < 0.001 &&    // 经度差异小于0.001度
+        latDiff < 0.001 &&    // 纬度差异小于0.001度
+        heightDiff < 1.0      // 高度差异小于1米
+      );
+      
+      console.log(`坐标比较详情:`, {
+        inputCoord,
+        currentCoord: this.currentCoord,
+        lonDiff,
+        latDiff, 
+        heightDiff,
+        isSameCoordinate
+      });
+      
+      if (isSameCoordinate) {
+        console.log('✅ 输入坐标与当前坐标相近，视为确认操作');
+        return this.executeConfirmation('enter');
+      } else {
+        console.log('📍 输入了明显不同的坐标，更新选择');
+        return this.selectCoordinate(inputCoord);
+      }
+    } else if (inputCoord) {
+      console.log('📍 输入新坐标，更新选择');
+      return this.selectCoordinate(inputCoord);
+    } else {
+      return { 
+        success: false, 
+        message: '坐标格式错误，请使用: lon,lat,height' 
+      };
+    }
+  }
+  
+  // 🔧 修复：其他输入提供明确提示
+  return {
+    success: false,
+    message: '请按回车确认当前位置，或输入新坐标 (lon,lat,height)'
+  };
+}
 
   /**
    * 处理地图点击
@@ -175,25 +228,77 @@ export class AddPointCommandHandler extends CommandHandler {
       return { success: false, message: '当前不接受地图点击' };
     }
 
+    console.log('AddPointCommandHandler.handleMapClick:', coord);
+    return this.selectCoordinate(coord);
+  }
+
+  /**
+   * 🔧 新增：选择坐标（统一的坐标选择逻辑）
+   * @param {Object} coord 坐标对象
+   * @returns {Object} 处理结果
+   */
+  selectCoordinate(coord) {
+    if (!GeometryUtils.validateCoordinate(coord)) {
+      return {
+        success: false,
+        message: '坐标无效，请重新选择'
+      };
+    }
+
     this.currentCoord = coord;
     
+    // 🔧 关键：设置确认状态
+    this.setConfirmationState({
+      state: ConfirmationState.WAITING_CONFIRM,
+      method: ConfirmationMethod.BOTH,
+      data: coord,
+      message: `确认在 (${coord.lon.toFixed(6)}, ${coord.lat.toFixed(6)}, ${coord.height.toFixed(2)}m) 添加点`
+    });
+
+    // 显示临时预览点
+    if (this.context.mapView && this.context.mapView.showTemporaryPoint) {
+      this.context.mapView.showTemporaryPoint(coord);
+    }
+
     return {
       success: true,
       message: `已选择位置: ${coord.lon.toFixed(6)}, ${coord.lat.toFixed(6)}, ${coord.height.toFixed(2)}m (按回车确认或右键确认)`,
       coordString: `${coord.lon.toFixed(6)},${coord.lat.toFixed(6)},${coord.height.toFixed(2)}`,
       needsConfirm: true,
-      updateInput: true,
-      needsMapClick: true // 仍然可以继续点击更新位置
+      needsMapClick: true, // 仍然可以点击地图重新选择位置
+      updateInput: true
     };
   }
 
   /**
-   * 获取占位符文本
+   * 🔧 重构：确认处理回调
+   * @param {string} method 确认方法
+   * @param {*} data 确认数据
+   * @returns {Object} 处理结果
+   */
+  onConfirm(method, data) {
+    console.log(`AddPointCommandHandler.onConfirm: 方法=${method}, 坐标=`, data);
+    
+    // 验证确认数据
+    if (!GeometryUtils.validateCoordinate(data)) {
+      return {
+        success: false,
+        message: '确认的坐标无效'
+      };
+    }
+
+    // 完成命令
+    console.log(`✅ 通过${method === 'enter' ? '回车' : '右键'}确认添加点`);
+    return this.finish(data);
+  }
+
+  /**
+   * 🔧 重构：获取特定命令的占位符文本
    * @returns {string} 占位符文本
    */
-  getPlaceholder() {
+  getSpecificPlaceholder() {
     if (this.currentCoord) {
-      return `按回车确认位置 (${this.currentCoord.lon.toFixed(3)}, ${this.currentCoord.lat.toFixed(3)})，或点击地图重新选择`;
+      return `当前位置: (${this.currentCoord.lon.toFixed(3)}, ${this.currentCoord.lat.toFixed(3)}) - 可继续点击地图或输入新坐标`;
     }
     return '左键点击地图选择位置，或输入坐标 (lon,lat,height)';
   }
@@ -229,7 +334,7 @@ export class AddPointCommandHandler extends CommandHandler {
 }
 
 /**
- * AddPoint命令工厂
+ * AddPoint命令工厂（保持不变）
  * 负责创建AddPointCommandHandler实例
  */
 export class AddPointCommandFactory extends CommandFactory {

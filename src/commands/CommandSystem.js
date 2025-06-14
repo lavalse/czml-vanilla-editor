@@ -337,14 +337,19 @@ class CommandSystem {
     if (!this.currentHandler) {
       return { 
         hasCommand: false, 
-        placeholder: '输入命令 (例如: AddPoint, AddPolyline)' 
+        placeholder: '输入命令 (例如: AddPoint, AddPolyline)',
+        commandName: null,
+        isWaitingForMapClick: false
       };
     }
 
+    // 🔧 关键修复：直接使用处理器的 getPlaceholder 方法
+    const placeholder = this.currentHandler.getPlaceholder();
+    
     return {
       hasCommand: true,
       commandName: this.currentHandler.constructor.name,
-      placeholder: this.currentHandler.getPlaceholder(),
+      placeholder: placeholder, // 🔧 使用处理器生成的占位符
       isWaitingForMapClick: this.currentHandler.isWaitingForMapClick()
     };
   }

@@ -65,7 +65,25 @@ export class Command {
 }
 
 /**
- * 命令处理器基类
+ * 🔧 新增：确认状态枚举
+ */
+export const ConfirmationState = {
+  NONE: 'none',                    // 不需要确认
+  WAITING_INPUT: 'waiting_input',  // 等待用户输入
+  WAITING_CONFIRM: 'waiting_confirm' // 等待确认
+};
+
+/**
+ * 🔧 新增：确认方法枚举
+ */
+export const ConfirmationMethod = {
+  ENTER_ONLY: 'enter_only',           // 只支持回车确认
+  RIGHT_CLICK_ONLY: 'right_click_only', // 只支持右键确认
+  BOTH: 'both'                        // 支持两种确认方式
+};
+
+/**
+ * 命令处理器基类 - 增强版本，统一确认逻辑
  * 处理用户交互，收集参数，最终创建并执行Command
  * 这是交互式的处理器，负责用户界面交互
  */
@@ -78,6 +96,14 @@ export class CommandHandler {
     this.result = null;
     this.waitingForMapClick = false;
     this.collectingData = true; // 是否正在收集数据
+    
+    // 🔧 新增：统一的确认状态管理
+    this.confirmationState = ConfirmationState.NONE;
+    this.confirmationMethod = ConfirmationMethod.BOTH;
+    this.pendingData = null; // 等待确认的数据
+    this.confirmationMessage = ''; // 确认提示信息
+    
+    console.log(`CommandHandler 创建: ${commandName}`);
   }
 
   /**
@@ -95,12 +121,52 @@ export class CommandHandler {
   }
 
   /**
-   * 处理用户输入
+   * 🔧 重构：处理用户输入 - 统一处理确认逻辑
    * @param {string} input 用户输入
    * @returns {Object} 处理结果
    */
   handleInput(input) {
-    throw new Error('子类必须实现 handleInput 方法');
+    const trimmedInput = input.trim();
+    console.log(`${this.commandName}.handleInput: "${trimmedInput}", 确认状态: ${this.confirmationState}`);
+    
+    // 🔧 统一确认逻辑：如果在等待确认状态
+    if (this.confirmationState === ConfirmationState.WAITING_CONFIRM) {
+      if (trimmedInput === '') {
+        // 空输入表示确认
+        console.log(`${this.commandName}: 空输入，执行回车确认`);
+        return this.executeConfirmation('enter');
+      } else {
+        // 非空输入表示修改数据
+        console.log(`${this.commandName}: 非空输入，处理确认状态下的新输入`);
+        return this.handleConfirmationInput(trimmedInput);
+      }
+    }
+    
+    // 正常输入处理逻辑（委托给子类）
+    return this.handleSpecificInput(trimmedInput);
+  }
+
+  /**
+   * 🔧 新增：处理特定命令的输入（子类必须重写）
+   * @param {string} input 用户输入
+   * @returns {Object} 处理结果
+   */
+  handleSpecificInput(input) {
+    throw new Error(`${this.commandName}: 子类必须实现 handleSpecificInput 方法`);
+  }
+
+  /**
+   * 🔧 新增：处理确认状态下的输入（子类可重写）
+   * @param {string} input 用户输入
+   * @returns {Object} 处理结果
+   */
+  handleConfirmationInput(input) {
+    console.log(`${this.commandName}: 处理确认状态下的新输入: "${input}"`);
+    
+    // 默认行为：将输入作为新数据重新处理
+    // 先清除确认状态，然后重新处理输入
+    this.clearConfirmationState();
+    return this.handleSpecificInput(input);
   }
 
   /**
@@ -116,10 +182,143 @@ export class CommandHandler {
   }
 
   /**
-   * 获取输入框占位符文本
+   * 🔧 新增：统一的右键确认处理
+   * @returns {Object} 处理结果
+   */
+  handleRightClickConfirm() {
+    console.log(`${this.commandName}.handleRightClickConfirm: 确认状态: ${this.confirmationState}`);
+    
+    if (this.confirmationState === ConfirmationState.WAITING_CONFIRM) {
+      // 检查是否支持右键确认
+      if (this.confirmationMethod === ConfirmationMethod.ENTER_ONLY) {
+        return {
+          success: false,
+          message: '当前状态只支持回车确认，不支持右键确认'
+        };
+      }
+      
+      console.log(`${this.commandName}: 执行右键确认`);
+      return this.executeConfirmation('right_click');
+    }
+    
+    // 如果不在确认状态，委托给子类处理
+    return this.handleSpecificRightClick();
+  }
+
+  /**
+   * 🔧 新增：处理特定命令的右键点击（子类可重写）
+   * @returns {Object} 处理结果
+   */
+  handleSpecificRightClick() {
+    return {
+      success: false,
+      message: `${this.commandName} 命令在当前状态下不支持右键操作`
+    };
+  }
+
+  /**
+   * 🔧 新增：设置确认状态
+   * @param {Object} config 确认配置
+   */
+  setConfirmationState(config) {
+    this.confirmationState = config.state || ConfirmationState.WAITING_CONFIRM;
+    this.confirmationMethod = config.method || ConfirmationMethod.BOTH;
+    this.pendingData = config.data || null;
+    this.confirmationMessage = config.message || '';
+    
+    console.log(`${this.commandName}: 设置确认状态 - 状态: ${this.confirmationState}, 方法: ${this.confirmationMethod}, 消息: "${this.confirmationMessage}"`);
+  }
+
+  /**
+   * 🔧 新增：清除确认状态
+   */
+  clearConfirmationState() {
+    this.confirmationState = ConfirmationState.NONE;
+    this.confirmationMethod = ConfirmationMethod.BOTH;
+    this.pendingData = null;
+    this.confirmationMessage = '';
+    
+    console.log(`${this.commandName}: 清除确认状态`);
+  }
+
+  /**
+   * 🔧 新增：执行确认操作
+   * @param {string} method 确认方法 ('enter' | 'right_click')
+   * @returns {Object} 确认结果
+   */
+  executeConfirmation(method) {
+    console.log(`${this.commandName}: 执行确认 - 方法: ${method}, 数据: ${this.pendingData ? '有' : '无'}`);
+    
+    try {
+      if (!this.pendingData) {
+        throw new Error('没有待确认的数据');
+      }
+      
+      // 调用子类的确认处理方法
+      const result = this.onConfirm(method, this.pendingData);
+      
+      if (result.success) {
+        // 确认成功，清除确认状态
+        this.clearConfirmationState();
+        console.log(`${this.commandName}: 确认成功`);
+      } else {
+        console.log(`${this.commandName}: 确认失败 - ${result.message}`);
+      }
+      
+      return result;
+      
+    } catch (error) {
+      console.error(`${this.commandName}: 确认执行异常:`, error);
+      return {
+        success: false,
+        message: `确认失败: ${error.message}`
+      };
+    }
+  }
+
+  /**
+   * 🔧 新增：确认处理回调（子类可重写）
+   * @param {string} method 确认方法
+   * @param {*} data 确认数据
+   * @returns {Object} 处理结果
+   */
+  onConfirm(method, data) {
+    console.log(`${this.commandName}.onConfirm: 方法=${method}, 使用默认确认行为`);
+    
+    // 默认行为：直接完成命令
+    return this.finish(data);
+  }
+
+  /**
+   * 🔧 增强：获取输入框占位符文本
    * @returns {string} 占位符文本
    */
   getPlaceholder() {
+    // 如果在等待确认状态，显示确认提示
+    if (this.confirmationState === ConfirmationState.WAITING_CONFIRM) {
+      const methods = [];
+      if (this.confirmationMethod === ConfirmationMethod.BOTH || 
+          this.confirmationMethod === ConfirmationMethod.ENTER_ONLY) {
+        methods.push('回车确认');
+      }
+      if (this.confirmationMethod === ConfirmationMethod.BOTH || 
+          this.confirmationMethod === ConfirmationMethod.RIGHT_CLICK_ONLY) {
+        methods.push('右键确认');
+      }
+      
+      const baseMessage = this.confirmationMessage || '请确认操作';
+      return `${baseMessage} (${methods.join(' 或 ')})`;
+    }
+    
+    // 委托给子类获取特定占位符
+    return this.getSpecificPlaceholder();
+  }
+
+  /**
+   * 🔧 新增：获取特定命令的占位符文本（子类可重写）
+   * @returns {string} 占位符文本
+   */
+  getSpecificPlaceholder() {
     return '输入参数或按ESC取消';
   }
 
@@ -129,6 +328,22 @@ export class CommandHandler {
    */
   isWaitingForMapClick() {
     return this.waitingForMapClick;
+  }
+
+  /**
+   * 🔧 新增：是否需要确认
+   * @returns {boolean} 是否需要确认
+   */
+  isWaitingForConfirmation() {
+    return this.confirmationState === ConfirmationState.WAITING_CONFIRM;
+  }
+
+  /**
+   * 🔧 新增：获取确认方法
+   * @returns {string} 确认方法
+   */
+  getConfirmationMethod() {
+    return this.confirmationMethod;
   }
 
   /**
@@ -154,6 +369,8 @@ export class CommandHandler {
     this.cancelled = true;
     this.waitingForMapClick = false;
     this.collectingData = false;
+    this.clearConfirmationState(); // 🔧 新增：清除确认状态
+    
     this.result = { 
       success: true, 
       message: `${this.commandName} 命令已取消`,
@@ -183,6 +400,7 @@ export class CommandHandler {
         this.completed = true;
         this.collectingData = false;
         this.waitingForMapClick = false;
+        this.clearConfirmationState(); // 🔧 新增：清除确认状态
         
         this.result = {
           success: true,
@@ -198,6 +416,7 @@ export class CommandHandler {
       this.completed = true;
       this.collectingData = false;
       this.waitingForMapClick = false;
+      this.clearConfirmationState(); // 🔧 新增：清除确认状态
       
       this.result = {
         success: false,

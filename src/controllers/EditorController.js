@@ -5,8 +5,19 @@ import UIView from '../views/UIView.js';
 import CommandSystem from '../commands/CommandSystem.js';
 
 /**
- * 编辑器控制器 - 修复EditPoint实体选择问题
- * 核心修复：区分不同命令的地图交互需求
+ * 地图交互模式枚举
+ */
+const MapInteractionMode = {
+  NONE: 'none',                    // 无交互
+  ADD_POINT: 'add_point',         // 添加点模式（点击创建点）
+  ADD_POLYLINE: 'add_polyline',   // 添加折线模式（点击添加点到折线）
+  SELECT_ENTITY: 'select_entity', // 选择实体模式（点击选择现有实体）
+  EDIT_POINT: 'edit_point'        // 编辑点模式（先选择实体，再选择新位置）
+};
+
+/**
+ * 编辑器控制器 - 最终统一地图交互架构版本
+ * 核心改进：统一管理所有地图交互模式，解决模式冲突问题
  */
 class EditorController {
   constructor(mapContainerId, uiPanelId) {
@@ -17,6 +28,14 @@ class EditorController {
     
     this.inputHistory = [];
     this.historyIndex = -1;
+    
+    // 🔧 新增：地图交互状态管理
+    this.currentMapMode = MapInteractionMode.NONE;
+    this.mapInteractionCallbacks = {
+      onMapClick: null,
+      onEntitySelect: null,
+      onRightClick: null
+    };
     
     this.init();
   }
@@ -31,7 +50,7 @@ class EditorController {
       this.uiView.focusCommandInput();
     }, 100);
     
-    console.log('编辑器控制器初始化完成 - 修复EditPoint版本');
+    console.log('编辑器控制器初始化完成 - 最终统一地图交互架构版本');
     this.showSystemInfo();
   }
 
@@ -99,56 +118,82 @@ class EditorController {
   }
 
   /**
-   * 处理命令输入 - 修复版本，正确处理空输入和确认操作
+   * 🔧 核心方法：统一更新UI状态
+   * 所有状态更新都通过这个方法，避免分散管理
    */
-  handleCommand(command) {
-    // 🔧 修复：区分真正的空输入和确认操作
-    const isEmptyInput = !command || command.trim() === '';
+  updateUIState() {
     const commandStatus = this.commandSystem.getCurrentCommandStatus();
     
-    console.log('🎯 handleCommand调用:', {
+    console.log('🔄 统一更新UI状态:', {
+      hasCommand: commandStatus.hasCommand,
+      commandName: commandStatus.commandName,
+      placeholder: commandStatus.placeholder
+    });
+
+    if (commandStatus.hasCommand) {
+      // 有活动命令：使用命令提供的占位符，保持当前输入
+      const currentInput = this.uiView.commandInput ? this.uiView.commandInput.value : '';
+      this.uiView.updateCommandInput(currentInput, commandStatus.placeholder);
+    } else {
+      // 无活动命令：清空输入框，显示默认占位符
+      this.uiView.updateCommandInput('', '输入命令 (例如: AddPoint, AddPolyline)');
+    }
+    
+    // 更新状态栏
+    this.updateStatusBar();
+  }
+
+  /**
+   * 🔧 简化版本：处理命令输入 - 每次处理后统一更新UI
+   */
+  handleCommand(command) {
+    const trimmedCommand = command ? command.trim() : '';
+    const commandStatus = this.commandSystem.getCurrentCommandStatus();
+    
+    console.log('🎯 EditorController.handleCommand:', {
       input: `"${command}"`,
-      isEmptyInput,
+      trimmed: `"${trimmedCommand}"`,
       hasActiveCommand: commandStatus.hasCommand,
       commandName: commandStatus.commandName
     });
-    
-    if (isEmptyInput && commandStatus.hasCommand) {
-      // 空输入且有活动命令 - 这是确认操作
-      console.log('✅ 空输入确认操作');
+
+    // 统一处理：如果有活动命令，直接传递给命令系统
+    if (commandStatus.hasCommand) {
+      console.log('✅ 有活动命令，传递给命令系统处理');
+      
       const context = this.createContext();
-      const result = this.commandSystem.parseAndExecute('', context);
+      const result = this.commandSystem.parseAndExecute(command, context);
+      
       this.handleCommandResult(result);
-      this.handleInputClearance(result);
-      this.updateCommandInputState();
-      this.updateStatusBar();
+      this.updateUIState(); // 🔧 统一更新UI状态
       return;
     }
 
-    if (isEmptyInput && !commandStatus.hasCommand) {
-      // 空输入且没有活动命令 - 忽略
+    // 空输入且没有活动命令 - 忽略
+    if (!trimmedCommand) {
       console.log('🚫 空输入且无活动命令，忽略');
       return;
     }
 
-    // 非空输入 - 正常处理
+    // 非空输入 - 启动新命令
+    console.log('📝 启动新命令:', trimmedCommand);
     this.uiView.addOutput(`> ${command}`, 'command');
 
-    if (command.trim() !== this.inputHistory[this.inputHistory.length - 1]) {
-      this.inputHistory.push(command.trim());
+    // 添加到输入历史
+    if (trimmedCommand !== this.inputHistory[this.inputHistory.length - 1]) {
+      this.inputHistory.push(trimmedCommand);
       if (this.inputHistory.length > 50) {
         this.inputHistory.shift();
       }
     }
     this.historyIndex = this.inputHistory.length;
 
+    // 执行新命令
     const context = this.createContext();
     const result = this.commandSystem.parseAndExecute(command, context);
     
     this.handleCommandResult(result);
-    this.handleInputClearance(result);
-    this.updateCommandInputState();
-    this.updateStatusBar();
+    this.updateUIState(); // 🔧 统一更新UI状态
   }
 
   createContext() {
@@ -161,7 +206,7 @@ class EditorController {
   }
 
   /**
-   * 处理命令结果 - 修复版本，确保EditPoint的右键确认正确设置
+   * 🔧 大幅简化：处理命令结果 - 只管理消息和地图交互
    */
   handleCommandResult(result) {
     if (result.message) {
@@ -169,111 +214,22 @@ class EditorController {
       this.uiView.addOutput(result.message, messageType);
     }
 
-    // 根据具体命令类型来决定地图交互方式
-    const commandStatus = this.commandSystem.getCurrentCommandStatus();
-    const currentCommand = commandStatus.commandName;
+    console.log('🎯 处理命令结果:', result);
 
-    console.log('🎯 处理命令结果:', {
-      currentCommand,
-      needsMapClick: result.needsMapClick,
-      needsConfirm: result.needsConfirm,
-      success: result.success,
-      coordString: result.coordString,
-      updateInput: result.updateInput
-    });
-
+    // 🔧 简化：只管理地图交互，不管理输入框（由updateUIState统一管理）
     if (result.needsMapClick) {
-      // 根据不同的命令启用不同的地图交互模式
-      if (currentCommand === 'EditPointCommandHandler') {
-        console.log('🎯 EditPoint命令：设置地图交互');
-        // 🔧 修复：为EditPoint命令正确设置右键确认，使用箭头函数绑定this
-        this.mapView.enableRightClickConfirm(() => {
-          console.log('🖱️ 控制器收到EditPoint右键确认');
-          
-          // 🔧 修复：直接在这里处理EditPoint右键确认逻辑
-          const commandStatus = this.commandSystem.getCurrentCommandStatus();
-          if (!commandStatus.hasCommand || commandStatus.commandName !== 'EditPointCommandHandler') {
-            console.log('❌ 不是EditPoint命令，忽略');
-            return;
-          }
-
-          const currentHandler = this.commandSystem.currentHandler;
-          if (!currentHandler) {
-            console.log('❌ 没有当前处理器');
-            return;
-          }
-
-          try {
-            console.log('📞 调用EditPoint处理器的右键确认方法');
-            const result = currentHandler.handleRightClickConfirm();
-            
-            console.log('📞 EditPoint右键确认结果:', result);
-            
-            if (result && result.success) {
-              // 处理成功的结果
-              this.handleCommandResult(result);
-              this.updateCommandInputState();
-              
-              // 如果命令完成，清理状态
-              if (currentHandler.completed) {
-                console.log('✅ EditPoint命令通过右键确认完成');
-                this.disableAllMapInteractions();
-              }
-            } else if (result && result.message) {
-              // 🔧 修复：显示错误或提示消息
-              const messageType = result.success ? 'info' : 'error';  
-              this.uiView.addOutput(result.message, messageType);
-            } else if (!result) {
-              // 🔧 修复：处理undefined返回值的情况
-              console.log('⚠️ EditPoint右键确认返回undefined');
-              this.uiView.addOutput('右键确认无效，请检查当前状态', 'error');
-            }
-          } catch (error) {
-            console.error('❌ EditPoint右键确认异常:', error);
-            this.uiView.addOutput('右键确认失败: ' + error.message, 'error');
-          }
-        });
-      } else {
-        console.log('🗺️ 其他命令：启用标准地图点击模式');
-        this.enableMapInteraction();
-      }
-    } else if (result.success && !result.needsConfirm) {
-      console.log('🔒 命令完成：禁用地图交互');
+      console.log('🗺️ 启用地图交互模式');
+      this.enableMapInteraction();
+    } else if (result.success && (!result.needsConfirm || result.command)) {
+      console.log('🔒 命令完成或不需要确认：禁用地图交互');
       this.disableMapInteraction();
     }
 
-    // 优先处理coordString更新输入框
-    if (result.coordString) {
-      console.log('📝 更新输入框内容:', result.coordString);
-      this.uiView.updateCommandInput(result.coordString);
-    }
-
-    // updateInput标志也要更新输入框状态
-    if (result.updateInput) {
-      this.updateCommandInputState();
-    }
-  }
-
-  handleInputClearance(result) {
-    if (result.success && !result.needsMapClick && !result.needsConfirm) {
-      this.uiView.updateCommandInput('', '输入命令 (例如: AddPoint, AddPolyline)');
-      this.disableMapInteraction();
-      return;
-    }
-
-    if (result.success && result.needsMapClick && !result.coordString) {
-      this.uiView.updateCommandInput('');
-      return;
-    }
-
-    if (!result.success) {
-      this.uiView.updateCommandInput('', '输入命令 (例如: AddPoint, AddPolyline)');
-      return;
-    }
+    // 🔧 移除：不再在这里管理输入框状态
   }
 
   /**
-   * 处理取消命令 - 增强版本
+   * 🔧 简化版本：处理取消命令
    */
   handleCancelCommand() {
     const result = this.commandSystem.cancelCurrentCommand();
@@ -282,11 +238,8 @@ class EditorController {
       this.uiView.addOutput(result.message, result.success ? 'info' : 'error');
     }
     
-    this.uiView.updateCommandInput('');
-    this.updateCommandInputState();
-    
-    // 🔧 修复：彻底禁用所有地图交互模式
     this.disableAllMapInteractions();
+    this.updateUIState(); // 🔧 统一更新UI状态
   }
 
   handleUndo() {
@@ -348,78 +301,239 @@ class EditorController {
     // 可以添加实时验证或提示逻辑
   }
 
+  // =====================================
+  // 🔧 统一地图交互管理方法
+  // =====================================
+
   /**
-   * 启用地图交互 - 修复版本（仅用于AddPoint, AddPolyline等命令）
+   * 🔧 核心方法：统一设置地图交互模式
+   * @param {string} mode 交互模式
+   * @param {Object} callbacks 回调函数
    */
-  enableMapInteraction() {
-    console.log('🗺️ 启用标准地图点击交互（创建点/线）');
+  setMapInteractionMode(mode, callbacks = {}) {
+    console.log(`🗺️ 设置地图交互模式: ${this.currentMapMode} → ${mode}`);
+    
+    // 先清理当前模式
+    this.clearMapInteractionMode();
+    
+    this.currentMapMode = mode;
+    this.mapInteractionCallbacks = {
+      onMapClick: callbacks.onMapClick || null,
+      onEntitySelect: callbacks.onEntitySelect || null,
+      onRightClick: callbacks.onRightClick || null
+    };
+    
+    // 根据模式启用相应的地图交互
+    switch (mode) {
+      case MapInteractionMode.ADD_POINT:
+      case MapInteractionMode.ADD_POLYLINE:
+        this.enablePointCreationMode();
+        break;
+        
+      case MapInteractionMode.SELECT_ENTITY:
+        this.enableEntitySelectionMode();
+        break;
+        
+      case MapInteractionMode.EDIT_POINT:
+        this.enableEditPointMode();
+        break;
+        
+      case MapInteractionMode.NONE:
+      default:
+        // 已经清理，无需额外操作
+        break;
+    }
+  }
+
+  /**
+   * 🔧 清理地图交互模式
+   */
+  clearMapInteractionMode() {
+    console.log(`🔒 清理地图交互模式: ${this.currentMapMode}`);
+    
+    // 禁用所有地图交互
+    this.mapView.disableMapClick();
+    this.mapView.disableRightClickConfirm();
+    this.mapView.disableEntitySelection();
+    
+    // 清理临时UI效果
+    this.mapView.hideTemporaryPoint();
+    this.mapView.hideTemporaryPolyline();
+    this.mapView.highlightSelectablePoints(false);
+    
+    this.currentMapMode = MapInteractionMode.NONE;
+    this.mapInteractionCallbacks = {
+      onMapClick: null,
+      onEntitySelect: null, 
+      onRightClick: null
+    };
+  }
+
+  /**
+   * 🔧 启用点创建模式（AddPoint, AddPolyline）
+   */
+  enablePointCreationMode() {
+    console.log('🔵 启用点创建模式');
     
     this.mapView.enableMapClickToAddPoint((coord) => {
-      this.handleMapClick(coord);
+      if (this.mapInteractionCallbacks.onMapClick) {
+        this.mapInteractionCallbacks.onMapClick(coord);
+      }
     });
     
     this.mapView.enableRightClickConfirm(() => {
-      this.handleRightClickConfirm();
+      if (this.mapInteractionCallbacks.onRightClick) {
+        this.mapInteractionCallbacks.onRightClick();
+      } else {
+        this.handleRightClickConfirm();
+      }
+    });
+  }
+
+  /**
+   * 🔧 启用实体选择模式（EditPoint的第一阶段）
+   */
+  enableEntitySelectionMode() {
+    console.log('🟡 启用实体选择模式');
+    
+    // 高亮可选择的点
+    this.mapView.highlightSelectablePoints(true);
+    
+    this.mapView.enableEntitySelection((result) => {
+      if (this.mapInteractionCallbacks.onEntitySelect) {
+        this.mapInteractionCallbacks.onEntitySelect(result);
+      }
+    });
+  }
+
+  /**
+   * 🔧 启用编辑点模式（EditPoint的第二阶段）
+   */
+  enableEditPointMode() {
+    console.log('🟠 启用编辑点模式');
+    
+    this.mapView.enableMapClickToAddPoint((coord) => {
+      if (this.mapInteractionCallbacks.onMapClick) {
+        this.mapInteractionCallbacks.onMapClick(coord);
+      }
     });
     
-    console.log('✅ 标准地图交互已启用（左键选点，右键确认）');
+    this.mapView.enableRightClickConfirm(() => {
+      if (this.mapInteractionCallbacks.onRightClick) {
+        this.mapInteractionCallbacks.onRightClick();
+      } else {
+        this.handleRightClickConfirm();
+      }
+    });
   }
 
   /**
-   * 禁用地图交互 - 标准版本
+   * 🔧 替换：enableMapInteraction 方法 - 使用统一地图交互架构
    */
-  disableMapInteraction() {
-    console.log('🔒 禁用标准地图交互');
-    this.mapView.disableMapClick();
-    this.mapView.disableRightClickConfirm();
-  }
-
-  /**
-   * 禁用所有地图交互 - 新增方法，用于彻底清理
-   */
-  disableAllMapInteractions() {
-    console.log('🔒 禁用所有地图交互模式');
-    
-    // 禁用标准地图点击
-    this.mapView.disableMapClick();
-    this.mapView.disableRightClickConfirm();
-    
-    // 禁用实体选择模式
-    this.mapView.disableEntitySelection();
-    
-    // 清理所有临时预览
-    this.mapView.hideTemporaryPoint();
-    this.mapView.hideTemporaryPolyline();
-    
-    // 清理高亮效果
-    this.mapView.highlightSelectablePoints(false);
-    
-    console.log('✅ 所有地图交互已禁用');
-  }
-
-  handleRightClickConfirm() {
-    console.log('右键确认被触发');
-    
+  enableMapInteraction() {
     const commandStatus = this.commandSystem.getCurrentCommandStatus();
+    
     if (!commandStatus.hasCommand) {
-      this.uiView.addOutput('右键确认：当前没有活动命令', 'info');
+      console.log('⚠️ 没有活动命令，不启用地图交互');
       return;
     }
 
-    this.uiView.addOutput('> 右键确认完成操作', 'command');
+    const handler = this.commandSystem.currentHandler;
+    console.log(`🎯 为命令 ${handler.constructor.name} 启用地图交互`);
     
-    const context = this.createContext();
-    const result = this.commandSystem.parseAndExecute('', context);
-    
-    console.log('右键确认命令结果:', result);
-    
-    this.handleCommandResult(result);
-    this.handleInputClearance(result);
-    this.updateCommandInputState();
+    // 🔧 根据命令类型和状态设置不同的交互模式
+    if (handler.constructor.name === 'AddPointCommandHandler') {
+      this.setMapInteractionMode(MapInteractionMode.ADD_POINT, {
+        onMapClick: (coord) => this.handleMapClick(coord),
+        onRightClick: () => this.handleRightClickConfirm()
+      });
+    } 
+    else if (handler.constructor.name === 'AddPolylineCommandHandler') {
+      this.setMapInteractionMode(MapInteractionMode.ADD_POLYLINE, {
+        onMapClick: (coord) => this.handleMapClick(coord),
+        onRightClick: () => this.handleRightClickConfirm()
+      });
+    }
+    else if (handler.constructor.name === 'EditPointCommandHandler') {
+      // 🔧 关键：EditPoint根据当前步骤决定模式
+      if (handler.currentStep === 'SELECT_POINT') {
+        console.log('🎯 EditPoint第一阶段：启用实体选择模式');
+        this.setMapInteractionMode(MapInteractionMode.SELECT_ENTITY, {
+          onEntitySelect: (result) => {
+            console.log('🎯 实体选择回调被调用:', result);
+            // 直接调用处理器的实体选择方法
+            const handlerResult = handler.handleEntitySelection(result);
+            if (handlerResult && handlerResult.success) {
+              // 处理成功，更新命令结果
+              this.handleCommandResult(handlerResult);
+            }
+            // 更新UI状态
+            this.updateUIState();
+            
+            // 🔧 关键：如果进入第二阶段，切换地图交互模式
+            if (handler.currentStep === 'SELECT_POSITION') {
+              console.log('🎯 EditPoint进入第二阶段：切换到编辑点模式');
+              this.setMapInteractionMode(MapInteractionMode.EDIT_POINT, {
+                onMapClick: (coord) => this.handleMapClick(coord),
+                onRightClick: () => this.handleRightClickConfirm()
+              });
+            }
+          }
+        });
+      } else if (handler.currentStep === 'SELECT_POSITION') {
+        console.log('🎯 EditPoint第二阶段：启用编辑点模式');
+        this.setMapInteractionMode(MapInteractionMode.EDIT_POINT, {
+          onMapClick: (coord) => this.handleMapClick(coord),
+          onRightClick: () => this.handleRightClickConfirm()
+        });
+      }
+    }
+    else {
+      // 默认模式：点创建模式
+      console.log('🎯 使用默认的点创建模式');
+      this.setMapInteractionMode(MapInteractionMode.ADD_POINT, {
+        onMapClick: (coord) => this.handleMapClick(coord),
+        onRightClick: () => this.handleRightClickConfirm()
+      });
+    }
   }
 
   /**
-   * 处理地图点击事件 - 修复版本，支持EditPoint命令的位置选择
+   * 🔧 替换：disableMapInteraction 方法 - 使用统一地图交互架构
+   */
+  disableMapInteraction() {
+    console.log('🔒 禁用地图交互');
+    this.setMapInteractionMode(MapInteractionMode.NONE);
+  }
+
+  /**
+   * 🔧 替换：disableAllMapInteractions 方法 - 使用统一地图交互架构
+   */
+  disableAllMapInteractions() {
+    console.log('🔒 禁用所有地图交互模式');
+    this.setMapInteractionMode(MapInteractionMode.NONE);
+  }
+
+  /**
+   * 🔧 统一方案：右键确认通过模拟回车实现
+   * 这样所有确认都走同一个通道
+   */
+  handleRightClickConfirm() {
+    console.log('🖱️ 控制器收到右键确认 - 转换为回车确认');
+    
+    const commandStatus = this.commandSystem.getCurrentCommandStatus();
+    if (!commandStatus.hasCommand) {
+      console.log('❌ 没有活动命令，忽略右键');
+      return;
+    }
+
+    // 🔧 核心改进：右键确认 = 模拟空输入（回车确认）
+    console.log('📞 右键确认转换为空输入处理');
+    this.handleCommand(''); // 🔧 关键：统一通过 handleCommand 处理
+  }
+
+  /**
+   * 🔧 简化版本：处理地图点击事件 - 统一更新UI
    */
   handleMapClick(coord) {
     const commandStatus = this.commandSystem.getCurrentCommandStatus();
@@ -431,7 +545,6 @@ class EditorController {
       coord: coord
     });
 
-    // 只有当前有命令且命令需要地图交互时才处理点击
     if (!commandStatus.hasCommand || !commandStatus.isWaitingForMapClick) {
       console.log('🚫 忽略地图点击：无活动命令或命令不需要地图交互');
       return;
@@ -444,57 +557,20 @@ class EditorController {
 
     console.log('📍 处理地图点击，命令:', commandStatus.commandName);
 
-    // 将点击事件传递给命令系统处理
     const result = this.commandSystem.handleMapClick(coord);
-    
     console.log('🎯 命令系统处理地图点击结果:', result);
     
     if (result.success) {
-      // 🔧 修复：对于AddPoint命令才显示临时预览点
-      // EditPoint命令不需要临时预览点，因为它有自己的交互逻辑
-      if (commandStatus.commandName === 'AddPointCommandHandler') {
-        this.mapView.showTemporaryPoint(coord);
-      }
-      
-      // 🔧 关键修复：确保所有成功的地图点击结果都正确处理
       this.handleCommandResult(result);
-      this.updateCommandInputState();
+      this.updateUIState(); // 🔧 统一更新UI状态
     } else {
       this.uiView.addOutput(result.message || '地图点击处理失败', 'error');
     }
   }
 
-  /**
-   * 更新命令输入状态 - 增强版本，提供统一的确认提示
-   */
-  updateCommandInputState() {
-    const status = this.commandSystem.getCurrentCommandStatus();
-    
-    if (status.hasCommand) {
-      let placeholder = status.placeholder;
-      
-      // 🔧 修复：为所有需要确认的状态添加统一的确认提示
-      if (placeholder && !placeholder.includes('按回车') && !placeholder.includes('右键')) {
-        if (status.placeholder.includes('确认') || status.placeholder.includes('完成')) {
-          placeholder += ' (回车确认 或 地图右键确认)';
-        }
-      }
-      
-      this.uiView.updateCommandInput(
-        this.uiView.commandInput ? this.uiView.commandInput.value : '',
-        placeholder
-      );
-    } else {
-      this.uiView.updateCommandInput(
-        this.uiView.commandInput ? this.uiView.commandInput.value : '', 
-        '输入命令 (例如: AddPoint, AddPolyline)'
-      );
-    }
-  }
-
   updateUI() {
     this.updateGeometryList();
-    this.updateStatusBar();
+    this.updateUIState(); // 🔧 使用统一的UI状态更新
   }
 
   updateStatusBar() {
