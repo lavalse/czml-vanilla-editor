@@ -1,6 +1,7 @@
 // 导入所有命令工厂
 import { AddPointCommandFactory } from './AddPointCommand.js';
 import { AddPolylineCommandFactory } from './AddPolylineCommand.js';
+import { EditPointCommandFactory } from './EditPointCommand.js';
 import { ClearCommandFactory, HelpCommandFactory } from './UtilityCommands.js';
 
 /**
@@ -132,6 +133,7 @@ class CommandSystem {
     this.registerCommand(new AddPolylineCommandFactory());
     this.registerCommand(new ClearCommandFactory());
     this.registerCommand(new HelpCommandFactory());
+    this.registerCommand(new EditPointCommandFactory());
     
     console.log(`已注册 ${this.commandFactories.size} 个内置命令`);
   }

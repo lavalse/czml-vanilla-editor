@@ -1,8 +1,9 @@
 /**
- * 地图视图类
+ * 地图视图类 - 完整版本
  * 负责管理Cesium地图的显示和交互
  * 支持左键选点和右键确认
- * 新增：支持临时polyline预览
+ * 支持临时polyline预览
+ * 新增：支持实体选择功能（用于EditPoint命令）
  */
 class MapView {
   constructor(containerId) {
@@ -11,10 +12,11 @@ class MapView {
     this.clickHandler = null;
     this.rightClickHandler = null;
     this.tempEntity = null;
-    this.tempPolylineEntity = null; // 新增：临时polyline实体
-    this.tempPolylinePoints = []; // 新增：临时polyline的点
+    this.tempPolylineEntity = null; // 临时polyline实体
+    this.tempPolylinePoints = []; // 临时polyline的点
     this.onMapClickCallback = null;
     this.onRightClickConfirmCallback = null;
+    this.onEntityClickCallback = null; // 新增：实体点击回调
     
     this.init();
   }
@@ -191,7 +193,7 @@ class MapView {
     }
     this.onMapClickCallback = null;
     this.hideTemporaryPoint();
-    this.hideTemporaryPolyline(); // 新增：同时隐藏临时polyline
+    this.hideTemporaryPolyline();
   }
 
   /**
@@ -350,12 +352,262 @@ class MapView {
     this.tempPolylinePoints = [];
   }
 
+  // =============================================
+  // 新增：实体选择功能（用于EditPoint命令）
+  // =============================================
+
   /**
-   * 根据CZML数据更新地图显示
+   * 启用实体选择模式（专门用于EditPoint命令）
+   * 用户点击地图时会尝试选择CZML实体而不是获取坐标
+   * @param {Function} onEntityClick 实体被点击时的回调函数
+   */
+  enableEntitySelection(onEntityClick) {
+    this.onEntityClickCallback = onEntityClick;
+
+    // 如果已有点击处理器，先销毁
+    if (this.clickHandler) {
+      this.clickHandler.destroy();
+    }
+
+    // 创建新的点击处理器，专门用于实体选择
+    this.clickHandler = new Cesium.ScreenSpaceEventHandler(this.viewer.canvas);
+
+    this.clickHandler.setInputAction((click) => {
+      console.log('实体选择模式 - 检测点击');
+      
+      // 使用Cesium的pick功能直接选择实体
+      const pickedObject = this.viewer.scene.pick(click.position);
+      
+      if (pickedObject && pickedObject.id) {
+        const entity = pickedObject.id;
+        console.log('选中实体:', entity.id, '类型:', entity.constructor.name);
+        
+        // 检查是否是点实体（有point属性且ID以PT_开头）
+        if (entity.point && entity.id.startsWith('PT_')) {
+          console.log('✅ 选中了点实体:', entity.id, entity.name);
+          
+          // 调用回调函数，传递实体信息
+          if (this.onEntityClickCallback) {
+            this.onEntityClickCallback({
+              success: true,
+              entityId: entity.id,
+              entityName: entity.name,
+              entityType: 'point',
+              entity: entity
+            });
+          }
+        } else if (entity.polyline && entity.id.startsWith('PL_')) {
+          // 选中了线实体
+          console.log('❌ 选中了线实体:', entity.id);
+          if (this.onEntityClickCallback) {
+            this.onEntityClickCallback({
+              success: false,
+              error: 'wrong_entity_type',
+              message: '请点击地图上的点（红色圆点），不是线条'
+            });
+          }
+        } else {
+          // 选中了其他类型的实体
+          console.log('❌ 选中了其他实体:', entity.id);
+          if (this.onEntityClickCallback) {
+            this.onEntityClickCallback({
+              success: false,
+              error: 'not_a_point',
+              message: '请点击地图上的点（红色圆点）'
+            });
+          }
+        }
+      } else {
+        // 没有选中任何实体
+        console.log('❌ 点击了空白区域');
+        if (this.onEntityClickCallback) {
+          this.onEntityClickCallback({
+            success: false,
+            error: 'no_entity',
+            message: '请点击地图上的点，或输入点ID'
+          });
+        }
+      }
+
+    }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+
+    console.log('✅ 实体选择模式已启用');
+  }
+
+  /**
+   * 禁用实体选择模式
+   */
+  disableEntitySelection() {
+    if (this.clickHandler) {
+      this.clickHandler.destroy();
+      this.clickHandler = null;
+    }
+    this.onEntityClickCallback = null;
+    console.log('✅ 实体选择模式已禁用');
+  }
+
+  /**
+   * 高亮所有可选择的点（视觉提示）
+   * @param {boolean} highlight 是否高亮
+   */
+  highlightSelectablePoints(highlight = true) {
+    const entities = this.viewer.entities.values;
+    let pointCount = 0;
+    
+    entities.forEach(entity => {
+      if (entity.point && entity.id.startsWith('PT_')) {
+        pointCount++;
+        
+        if (highlight) {
+          // 保存原始样式（如果还没保存）
+          if (!entity._originalPointStyle) {
+            entity._originalPointStyle = {
+              pixelSize: entity.point.pixelSize._value || entity.point.pixelSize,
+              color: entity.point.color._value || entity.point.color,
+              outlineWidth: entity.point.outlineWidth ? 
+                (entity.point.outlineWidth._value || entity.point.outlineWidth) : 0,
+              outlineColor: entity.point.outlineColor ? 
+                (entity.point.outlineColor._value || entity.point.outlineColor) : Cesium.Color.BLACK
+            };
+          }
+          
+          // 应用高亮样式
+          entity.point.pixelSize = entity._originalPointStyle.pixelSize * 1.3;
+          entity.point.outlineWidth = 2;
+          entity.point.outlineColor = Cesium.Color.YELLOW;
+          
+          console.log(`高亮点: ${entity.id}`);
+        } else {
+          // 恢复原始样式
+          if (entity._originalPointStyle) {
+            entity.point.pixelSize = entity._originalPointStyle.pixelSize;
+            entity.point.outlineWidth = entity._originalPointStyle.outlineWidth;
+            entity.point.outlineColor = entity._originalPointStyle.outlineColor;
+            delete entity._originalPointStyle;
+            
+            console.log(`恢复点样式: ${entity.id}`);
+          }
+        }
+      }
+    });
+    
+    if (highlight) {
+      console.log(`✅ 已高亮 ${pointCount} 个可选择的点`);
+    } else {
+      console.log(`✅ 已恢复 ${pointCount} 个点的原始样式`);
+    }
+  }
+
+  /**
+   * 高亮特定的点（选中状态）
+   * @param {string} entityId 要高亮的实体ID
+   * @param {boolean} highlight 是否高亮
+   */
+  highlightSpecificPoint(entityId, highlight = true) {
+    const entity = this.viewer.entities.getById(entityId);
+    
+    if (entity && entity.point) {
+      if (highlight) {
+        // 保存原始样式（如果还没保存）
+        if (!entity._selectedPointStyle) {
+          entity._selectedPointStyle = {
+            pixelSize: entity.point.pixelSize._value || entity.point.pixelSize,
+            color: entity.point.color._value || entity.point.color
+          };
+        }
+        
+        // 应用选中样式（黄色+放大）
+        entity.point.pixelSize = entity._selectedPointStyle.pixelSize * 1.5;
+        entity.point.color = Cesium.Color.YELLOW;
+        entity.point.outlineWidth = 3;
+        entity.point.outlineColor = Cesium.Color.ORANGE;
+        
+        console.log(`✅ 高亮选中点: ${entityId}`);
+      } else {
+        // 恢复原始样式
+        if (entity._selectedPointStyle) {
+          entity.point.pixelSize = entity._selectedPointStyle.pixelSize;
+          entity.point.color = entity._selectedPointStyle.color;
+          entity.point.outlineWidth = 0;
+          delete entity._selectedPointStyle;
+          
+          console.log(`✅ 恢复选中点样式: ${entityId}`);
+        }
+      }
+    } else {
+      console.warn(`⚠️ 找不到要高亮的点: ${entityId}`);
+    }
+  }
+
+  /**
+   * 检查指定实体是否存在且为点类型
+   * @param {string} entityId 实体ID
+   * @returns {boolean} 是否为有效的点实体
+   */
+  isValidPointEntity(entityId) {
+    const entity = this.viewer.entities.getById(entityId);
+    return entity && entity.point && entity.id.startsWith('PT_');
+  }
+
+  /**
+   * 获取所有点实体的信息
+   * @returns {Array} 点实体信息数组
+   */
+  getAllPointEntities() {
+    const entities = this.viewer.entities.values;
+    const points = [];
+    
+    entities.forEach(entity => {
+      if (entity.point && entity.id.startsWith('PT_')) {
+        points.push({
+          id: entity.id,
+          name: entity.name,
+          position: entity.position
+        });
+      }
+    });
+    
+    return points;
+  }
+
+  /**
+   * 测试实体选择功能
+   */
+  testEntitySelection() {
+    console.log('🧪 测试实体选择功能...');
+    
+    const points = this.getAllPointEntities();
+    console.log(`找到 ${points.length} 个点实体:`, points);
+    
+    // 测试高亮功能
+    this.highlightSelectablePoints(true);
+    
+    setTimeout(() => {
+      console.log('恢复原始样式...');
+      this.highlightSelectablePoints(false);
+    }, 3000);
+    
+    // 测试实体选择
+    this.enableEntitySelection((result) => {
+      console.log('实体选择测试结果:', result);
+      this.disableEntitySelection();
+    });
+    
+    console.log('点击地图上的点进行测试...');
+  }
+
+  // =============================================
+  // 修复后的CZML数据同步方法
+  // =============================================
+
+  /**
+   * 根据CZML数据更新地图显示 - 修复版本
    * @param {Array} czmlDocument CZML文档数组
    */
   updateFromCzml(czmlDocument) {
     try {
+      console.log('🔄 开始根据CZML更新地图显示...');
+      
       // 保存临时实体的引用
       const tempEntity = this.tempEntity;
       const tempPolylineEntity = this.tempPolylineEntity;
@@ -366,80 +618,20 @@ class MapView {
       
       // 重新加载CZML数据
       if (czmlDocument && czmlDocument.length > 1) {
+        console.log(`处理 ${czmlDocument.length - 1} 个CZML实体...`);
+        
         // 跳过第一个document实体，只处理实际的地理实体
         for (let i = 1; i < czmlDocument.length; i++) {
-          const entity = czmlDocument[i];
+          const czmlEntity = czmlDocument[i];
+          console.log(`处理实体 ${i}: ${czmlEntity.id} (${czmlEntity.name})`);
           
           // 处理点实体
-          if (entity.position && entity.point) {
-            const coord = {
-              lon: entity.position.cartographicDegrees[0],
-              lat: entity.position.cartographicDegrees[1],
-              height: entity.position.cartographicDegrees[2]
-            };
-            
-            this.addPointToMap(coord, {
-              name: entity.name || '点',
-              color: Cesium.Color.fromBytes(
-                entity.point.color.rgba[0],
-                entity.point.color.rgba[1],
-                entity.point.color.rgba[2],
-                entity.point.color.rgba[3]
-              ),
-              pixelSize: entity.point.pixelSize || 10
-            });
+          if (czmlEntity.position && czmlEntity.point) {
+            this.addCzmlPointEntity(czmlEntity);
           }
-          
           // 处理polyline实体
-          else if (entity.polyline) {
-            console.log('处理polyline实体:', JSON.stringify(entity, null, 2));
-            
-            if (!entity.polyline.positions) {
-              console.error('Polyline实体缺少positions属性:', entity);
-              continue;
-            }
-            
-            if (!entity.polyline.positions.cartographicDegrees) {
-              console.error('Polyline positions缺少cartographicDegrees属性:', entity.polyline.positions);
-              continue;
-            }
-            
-            const cartographicDegrees = entity.polyline.positions.cartographicDegrees;
-            const coordinates = [];
-            
-            // 将平坦数组转换为坐标对象数组
-            for (let j = 0; j < cartographicDegrees.length; j += 3) {
-              coordinates.push({
-                lon: cartographicDegrees[j],
-                lat: cartographicDegrees[j + 1],
-                height: cartographicDegrees[j + 2]
-              });
-            }
-            
-            console.log('转换后的polyline坐标:', coordinates);
-            
-            // 获取样式信息
-            let color = Cesium.Color.CYAN; // 默认颜色
-            let width = 3; // 默认宽度
-            
-            if (entity.polyline.material && 
-                entity.polyline.material.solidColor && 
-                entity.polyline.material.solidColor.color &&
-                entity.polyline.material.solidColor.color.rgba) {
-              const rgba = entity.polyline.material.solidColor.color.rgba;
-              color = Cesium.Color.fromBytes(rgba[0], rgba[1], rgba[2], rgba[3]);
-            }
-            
-            if (entity.polyline.width) {
-              width = entity.polyline.width;
-            }
-            
-            this.addPolylineToMap(coordinates, {
-              name: entity.name || 'Polyline',
-              color: color,
-              width: width,
-              clampToGround: entity.polyline.clampToGround !== false
-            });
+          else if (czmlEntity.polyline) {
+            this.addCzmlPolylineEntity(czmlEntity);
           }
         }
       }
@@ -458,13 +650,124 @@ class MapView {
       // 恢复临时polyline的点
       if (tempPolylinePoints.length > 0) {
         this.tempPolylinePoints = tempPolylinePoints;
-        // 重新创建临时点（因为它们可能在清除时被移除了）
         this.updateTemporaryPolyline(this.tempPolylinePoints);
       }
 
-      console.log('地图已根据CZML数据更新');
+      console.log('✅ 地图已根据CZML数据更新');
+      
+      // 验证更新结果
+      const allEntities = this.viewer.entities.values;
+      const ptEntities = allEntities.filter(e => e.id.startsWith('PT_'));
+      const plEntities = allEntities.filter(e => e.id.startsWith('PL_'));
+      console.log(`✅ 更新完成: ${ptEntities.length} 个点, ${plEntities.length} 条线`);
+      
     } catch (error) {
-      console.error('更新地图显示时出错:', error);
+      console.error('❌ 更新地图显示时出错:', error);
+    }
+  }
+
+  /**
+   * 添加CZML点实体到地图（保持原始ID）- 新方法
+   * @param {Object} czmlEntity CZML点实体数据
+   */
+  addCzmlPointEntity(czmlEntity) {
+    try {
+      const coord = {
+        lon: czmlEntity.position.cartographicDegrees[0],
+        lat: czmlEntity.position.cartographicDegrees[1],
+        height: czmlEntity.position.cartographicDegrees[2]
+      };
+      
+      // 提取颜色信息
+      let color = Cesium.Color.RED; // 默认颜色
+      if (czmlEntity.point.color && czmlEntity.point.color.rgba) {
+        const rgba = czmlEntity.point.color.rgba;
+        color = Cesium.Color.fromBytes(rgba[0], rgba[1], rgba[2], rgba[3]);
+      }
+      
+      // 直接创建Cesium实体，保持原始ID
+      const entity = this.viewer.entities.add({
+        id: czmlEntity.id, // 保持CZML中的原始ID
+        name: czmlEntity.name,
+        position: Cesium.Cartesian3.fromDegrees(coord.lon, coord.lat, coord.height),
+        point: {
+          pixelSize: czmlEntity.point.pixelSize || 10,
+          color: color,
+          outlineWidth: 0,
+          outlineColor: Cesium.Color.BLACK
+        }
+      });
+      
+      console.log(`✅ 添加点实体: ${entity.id} (${entity.name})`);
+      return entity;
+      
+    } catch (error) {
+      console.error('❌ 添加点实体失败:', czmlEntity.id, error);
+      return null;
+    }
+  }
+
+  /**
+   * 添加CZML线实体到地图（保持原始ID）- 新方法
+   * @param {Object} czmlEntity CZML线实体数据
+   */
+  addCzmlPolylineEntity(czmlEntity) {
+    try {
+      console.log('处理polyline实体:', JSON.stringify(czmlEntity, null, 2));
+      
+      if (!czmlEntity.polyline.positions || !czmlEntity.polyline.positions.cartographicDegrees) {
+        console.error('Polyline实体缺少positions数据:', czmlEntity);
+        return null;
+      }
+      
+      const cartographicDegrees = czmlEntity.polyline.positions.cartographicDegrees;
+      
+      // 转换坐标为Cartesian3数组
+      const positions = [];
+      for (let j = 0; j < cartographicDegrees.length; j += 3) {
+        positions.push(Cesium.Cartesian3.fromDegrees(
+          cartographicDegrees[j],
+          cartographicDegrees[j + 1], 
+          cartographicDegrees[j + 2]
+        ));
+      }
+      
+      console.log('转换后的polyline坐标数量:', positions.length);
+      
+      // 获取样式信息
+      let color = Cesium.Color.CYAN; // 默认颜色
+      let width = 3; // 默认宽度
+      
+      if (czmlEntity.polyline.material && 
+          czmlEntity.polyline.material.solidColor && 
+          czmlEntity.polyline.material.solidColor.color &&
+          czmlEntity.polyline.material.solidColor.color.rgba) {
+        const rgba = czmlEntity.polyline.material.solidColor.color.rgba;
+        color = Cesium.Color.fromBytes(rgba[0], rgba[1], rgba[2], rgba[3]);
+      }
+      
+      if (czmlEntity.polyline.width) {
+        width = czmlEntity.polyline.width;
+      }
+      
+      // 直接创建Cesium实体，保持原始ID
+      const entity = this.viewer.entities.add({
+        id: czmlEntity.id, // 保持CZML中的原始ID
+        name: czmlEntity.name,
+        polyline: {
+          positions: positions,
+          width: width,
+          material: color,
+          clampToGround: czmlEntity.polyline.clampToGround !== false
+        }
+      });
+      
+      console.log(`✅ 添加线实体: ${entity.id} (${entity.name})`);
+      return entity;
+      
+    } catch (error) {
+      console.error('❌ 添加线实体失败:', czmlEntity.id, error);
+      return null;
     }
   }
 
