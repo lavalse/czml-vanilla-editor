@@ -5,50 +5,36 @@ import UIView from '../views/UIView.js';
 import CommandSystem from '../commands/CommandSystem.js';
 
 /**
- * 编辑器控制器
- * 协调Model和View之间的交互，处理用户操作
- * 支持新的命令系统架构和撤销/重做功能
+ * 编辑器控制器 - 修复EditPoint实体选择问题
+ * 核心修复：区分不同命令的地图交互需求
  */
 class EditorController {
   constructor(mapContainerId, uiPanelId) {
-    // 初始化Model
     this.czmlModel = new CzmlModel();
-    
-    // 初始化View
     this.mapView = new MapView(mapContainerId);
     this.uiView = new UIView(uiPanelId);
-    
-    // 初始化命令系统
     this.commandSystem = new CommandSystem();
     
-    // 用户输入历史管理（用于界面历史导航）
     this.inputHistory = [];
     this.historyIndex = -1;
     
     this.init();
   }
 
-  /**
-   * 初始化控制器
-   */
   init() {
     this.setupModelListeners();
     this.setupViewListeners();
     this.setupKeyboardShortcuts();
     this.updateUI();
     
-    // 聚焦到命令输入框
     setTimeout(() => {
       this.uiView.focusCommandInput();
     }, 100);
     
-    console.log('编辑器控制器初始化完成 - 新命令系统架构');
+    console.log('编辑器控制器初始化完成 - 修复EditPoint版本');
     this.showSystemInfo();
   }
 
-  /**
-   * 显示系统信息
-   */
   showSystemInfo() {
     const stats = this.commandSystem.getStatistics();
     console.log('命令系统统计:', stats);
@@ -58,73 +44,53 @@ class EditorController {
     this.uiView.addOutput(`输入 Help 查看详细帮助`, 'info');
   }
 
-  /**
-   * 设置Model监听器（观察者模式）
-   */
   setupModelListeners() {
-    // 当CZML数据变化时，自动更新地图显示
     this.czmlModel.addListener((czmlDocument) => {
       this.mapView.updateFromCzml(czmlDocument);
       this.updateGeometryList();
     });
   }
 
-  /**
-   * 设置View监听器
-   */
   setupViewListeners() {
-    // 命令执行
     this.uiView.addListener('executeCommand', (command) => {
       this.handleCommand(command);
     });
 
-    // 取消命令
     this.uiView.addListener('cancelCommand', () => {
       this.handleCancelCommand();
     });
 
-    // 历史导航
     this.uiView.addListener('navigateHistory', (direction) => {
       this.handleHistoryNavigation(direction);
     });
 
-    // 输入变化
     this.uiView.addListener('inputChange', (value) => {
       this.handleInputChange(value);
     });
 
-    // CZML更新请求
     this.uiView.addListener('requestCzmlUpdate', () => {
       this.updateCzmlDisplay();
     });
 
-    // 导出CZML
     this.uiView.addListener('exportCzml', () => {
       this.exportCzml();
     });
 
-    // 更新CZML数据
     this.uiView.addListener('updateCzmlData', (czmlData) => {
       this.updateCzmlData(czmlData);
     });
   }
 
-  /**
-   * 设置键盘快捷键
-   */
   setupKeyboardShortcuts() {
     document.addEventListener('keydown', (e) => {
-      // Ctrl+Z: 撤销
       if (e.ctrlKey && e.key === 'z' && !e.shiftKey) {
         e.preventDefault();
         this.handleUndo();
       }
-      // Ctrl+Y 或 Ctrl+Shift+Z: 重做
       else if (e.ctrlKey && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
         e.preventDefault();
         this.handleRedo();
       }
-      // Ctrl+H: 显示命令历史
       else if (e.ctrlKey && e.key === 'h') {
         e.preventDefault();
         this.showCommandHistory();
@@ -133,52 +99,58 @@ class EditorController {
   }
 
   /**
-   * 处理命令输入
-   * @param {string} command 用户输入的命令
+   * 处理命令输入 - 修复版本，正确处理空输入和确认操作
    */
   handleCommand(command) {
-    // 处理空输入
-    if (!command.trim()) {
-      const commandStatus = this.commandSystem.getCurrentCommandStatus();
-      if (commandStatus.hasCommand) {
-        // 有活动命令时，空输入传递给命令系统
-        const context = this.createContext();
-        const result = this.commandSystem.parseAndExecute('', context);
-        this.handleCommandResult(result);
-        this.handleInputClearance(result);
-        this.updateCommandInputState();
-      }
+    // 🔧 修复：区分真正的空输入和确认操作
+    const isEmptyInput = !command || command.trim() === '';
+    const commandStatus = this.commandSystem.getCurrentCommandStatus();
+    
+    console.log('🎯 handleCommand调用:', {
+      input: `"${command}"`,
+      isEmptyInput,
+      hasActiveCommand: commandStatus.hasCommand,
+      commandName: commandStatus.commandName
+    });
+    
+    if (isEmptyInput && commandStatus.hasCommand) {
+      // 空输入且有活动命令 - 这是确认操作
+      console.log('✅ 空输入确认操作');
+      const context = this.createContext();
+      const result = this.commandSystem.parseAndExecute('', context);
+      this.handleCommandResult(result);
+      this.handleInputClearance(result);
+      this.updateCommandInputState();
+      this.updateStatusBar();
       return;
     }
 
-    // 显示用户输入的命令
+    if (isEmptyInput && !commandStatus.hasCommand) {
+      // 空输入且没有活动命令 - 忽略
+      console.log('🚫 空输入且无活动命令，忽略');
+      return;
+    }
+
+    // 非空输入 - 正常处理
     this.uiView.addOutput(`> ${command}`, 'command');
 
-    // 添加到历史记录
     if (command.trim() !== this.inputHistory[this.inputHistory.length - 1]) {
       this.inputHistory.push(command.trim());
-      // 限制历史记录大小
       if (this.inputHistory.length > 50) {
         this.inputHistory.shift();
       }
     }
     this.historyIndex = this.inputHistory.length;
 
-    // 执行命令
     const context = this.createContext();
     const result = this.commandSystem.parseAndExecute(command, context);
     
-    // 处理命令结果
     this.handleCommandResult(result);
     this.handleInputClearance(result);
     this.updateCommandInputState();
-    this.updateStatusBar(); // 更新状态栏
+    this.updateStatusBar();
   }
 
-  /**
-   * 创建命令执行上下文
-   * @returns {Object} 上下文对象
-   */
   createContext() {
     return {
       czmlModel: this.czmlModel,
@@ -189,8 +161,7 @@ class EditorController {
   }
 
   /**
-   * 处理命令结果
-   * @param {Object} result 命令执行结果
+   * 处理命令结果 - 修复版本，确保EditPoint的右键确认正确设置
    */
   handleCommandResult(result) {
     if (result.message) {
@@ -198,43 +169,103 @@ class EditorController {
       this.uiView.addOutput(result.message, messageType);
     }
 
-    // 根据命令结果控制地图交互
+    // 根据具体命令类型来决定地图交互方式
+    const commandStatus = this.commandSystem.getCurrentCommandStatus();
+    const currentCommand = commandStatus.commandName;
+
+    console.log('🎯 处理命令结果:', {
+      currentCommand,
+      needsMapClick: result.needsMapClick,
+      needsConfirm: result.needsConfirm,
+      success: result.success,
+      coordString: result.coordString,
+      updateInput: result.updateInput
+    });
+
     if (result.needsMapClick) {
-      this.enableMapInteraction();
+      // 根据不同的命令启用不同的地图交互模式
+      if (currentCommand === 'EditPointCommandHandler') {
+        console.log('🎯 EditPoint命令：设置地图交互');
+        // 🔧 修复：为EditPoint命令正确设置右键确认，使用箭头函数绑定this
+        this.mapView.enableRightClickConfirm(() => {
+          console.log('🖱️ 控制器收到EditPoint右键确认');
+          
+          // 🔧 修复：直接在这里处理EditPoint右键确认逻辑
+          const commandStatus = this.commandSystem.getCurrentCommandStatus();
+          if (!commandStatus.hasCommand || commandStatus.commandName !== 'EditPointCommandHandler') {
+            console.log('❌ 不是EditPoint命令，忽略');
+            return;
+          }
+
+          const currentHandler = this.commandSystem.currentHandler;
+          if (!currentHandler) {
+            console.log('❌ 没有当前处理器');
+            return;
+          }
+
+          try {
+            console.log('📞 调用EditPoint处理器的右键确认方法');
+            const result = currentHandler.handleRightClickConfirm();
+            
+            console.log('📞 EditPoint右键确认结果:', result);
+            
+            if (result && result.success) {
+              // 处理成功的结果
+              this.handleCommandResult(result);
+              this.updateCommandInputState();
+              
+              // 如果命令完成，清理状态
+              if (currentHandler.completed) {
+                console.log('✅ EditPoint命令通过右键确认完成');
+                this.disableAllMapInteractions();
+              }
+            } else if (result && result.message) {
+              // 🔧 修复：显示错误或提示消息
+              const messageType = result.success ? 'info' : 'error';  
+              this.uiView.addOutput(result.message, messageType);
+            } else if (!result) {
+              // 🔧 修复：处理undefined返回值的情况
+              console.log('⚠️ EditPoint右键确认返回undefined');
+              this.uiView.addOutput('右键确认无效，请检查当前状态', 'error');
+            }
+          } catch (error) {
+            console.error('❌ EditPoint右键确认异常:', error);
+            this.uiView.addOutput('右键确认失败: ' + error.message, 'error');
+          }
+        });
+      } else {
+        console.log('🗺️ 其他命令：启用标准地图点击模式');
+        this.enableMapInteraction();
+      }
     } else if (result.success && !result.needsConfirm) {
+      console.log('🔒 命令完成：禁用地图交互');
       this.disableMapInteraction();
     }
 
-    // 如果命令返回了坐标字符串，更新输入框
+    // 优先处理coordString更新输入框
     if (result.coordString) {
+      console.log('📝 更新输入框内容:', result.coordString);
       this.uiView.updateCommandInput(result.coordString);
     }
 
-    // 如果需要更新输入框
+    // updateInput标志也要更新输入框状态
     if (result.updateInput) {
       this.updateCommandInputState();
     }
   }
 
-  /**
-   * 处理输入框清空逻辑
-   * @param {Object} result 命令执行结果
-   */
   handleInputClearance(result) {
-    // 如果命令立即完成（不需要进一步交互），清空输入框
     if (result.success && !result.needsMapClick && !result.needsConfirm) {
       this.uiView.updateCommandInput('', '输入命令 (例如: AddPoint, AddPolyline)');
       this.disableMapInteraction();
       return;
     }
 
-    // 如果命令开始等待地图点击，清空输入框但保持命令状态
     if (result.success && result.needsMapClick && !result.coordString) {
       this.uiView.updateCommandInput('');
       return;
     }
 
-    // 如果命令失败，清空输入框并重置为初始状态
     if (!result.success) {
       this.uiView.updateCommandInput('', '输入命令 (例如: AddPoint, AddPolyline)');
       return;
@@ -242,7 +273,7 @@ class EditorController {
   }
 
   /**
-   * 处理取消命令
+   * 处理取消命令 - 增强版本
    */
   handleCancelCommand() {
     const result = this.commandSystem.cancelCurrentCommand();
@@ -251,19 +282,13 @@ class EditorController {
       this.uiView.addOutput(result.message, result.success ? 'info' : 'error');
     }
     
-    // 清空输入框并重置状态
     this.uiView.updateCommandInput('');
     this.updateCommandInputState();
     
-    // 禁用地图交互并隐藏临时预览
-    this.disableMapInteraction();
-    this.mapView.hideTemporaryPoint();
-    this.mapView.hideTemporaryPolyline();
+    // 🔧 修复：彻底禁用所有地图交互模式
+    this.disableAllMapInteractions();
   }
 
-  /**
-   * 处理撤销操作
-   */
   handleUndo() {
     const result = this.commandSystem.undo();
     this.uiView.addOutput(result.message, result.success ? 'success' : 'info');
@@ -273,9 +298,6 @@ class EditorController {
     }
   }
 
-  /**
-   * 处理重做操作
-   */
   handleRedo() {
     const result = this.commandSystem.redo();
     this.uiView.addOutput(result.message, result.success ? 'success' : 'info');
@@ -285,9 +307,6 @@ class EditorController {
     }
   }
 
-  /**
-   * 显示命令历史
-   */
   showCommandHistory() {
     const historyInfo = this.commandSystem.getCommandHistoryInfo();
     
@@ -308,10 +327,6 @@ class EditorController {
     this.uiView.addOutput(historyText, 'info');
   }
 
-  /**
-   * 处理历史命令导航
-   * @param {number} direction 方向 (-1: 上一个, 1: 下一个)
-   */
   handleHistoryNavigation(direction) {
     if (this.inputHistory.length === 0) return;
 
@@ -329,98 +344,120 @@ class EditorController {
     this.uiView.updateCommandInput(command);
   }
 
-  /**
-   * 处理输入变化
-   * @param {string} value 当前输入值
-   */
   handleInputChange(value) {
-    // 这里可以添加实时验证或提示逻辑
+    // 可以添加实时验证或提示逻辑
   }
 
   /**
-   * 启用地图交互
+   * 启用地图交互 - 修复版本（仅用于AddPoint, AddPolyline等命令）
    */
   enableMapInteraction() {
+    console.log('🗺️ 启用标准地图点击交互（创建点/线）');
+    
     this.mapView.enableMapClickToAddPoint((coord) => {
       this.handleMapClick(coord);
     });
     
-    // 启用右键确认功能
     this.mapView.enableRightClickConfirm(() => {
       this.handleRightClickConfirm();
     });
     
-    console.log('地图交互已启用（左键选点，右键确认）');
+    console.log('✅ 标准地图交互已启用（左键选点，右键确认）');
   }
 
   /**
-   * 禁用地图交互
+   * 禁用地图交互 - 标准版本
    */
   disableMapInteraction() {
+    console.log('🔒 禁用标准地图交互');
     this.mapView.disableMapClick();
     this.mapView.disableRightClickConfirm();
-    console.log('地图交互已禁用');
   }
 
   /**
-   * 处理右键确认
+   * 禁用所有地图交互 - 新增方法，用于彻底清理
    */
+  disableAllMapInteractions() {
+    console.log('🔒 禁用所有地图交互模式');
+    
+    // 禁用标准地图点击
+    this.mapView.disableMapClick();
+    this.mapView.disableRightClickConfirm();
+    
+    // 禁用实体选择模式
+    this.mapView.disableEntitySelection();
+    
+    // 清理所有临时预览
+    this.mapView.hideTemporaryPoint();
+    this.mapView.hideTemporaryPolyline();
+    
+    // 清理高亮效果
+    this.mapView.highlightSelectablePoints(false);
+    
+    console.log('✅ 所有地图交互已禁用');
+  }
+
   handleRightClickConfirm() {
     console.log('右键确认被触发');
     
-    // 检查是否有活动命令
     const commandStatus = this.commandSystem.getCurrentCommandStatus();
     if (!commandStatus.hasCommand) {
       this.uiView.addOutput('右键确认：当前没有活动命令', 'info');
       return;
     }
 
-    // 显示右键确认的执行信息
     this.uiView.addOutput('> 右键确认完成操作', 'command');
     
-    // 执行空命令（表示确认）
     const context = this.createContext();
     const result = this.commandSystem.parseAndExecute('', context);
     
     console.log('右键确认命令结果:', result);
     
-    // 处理命令结果
     this.handleCommandResult(result);
     this.handleInputClearance(result);
     this.updateCommandInputState();
   }
 
   /**
-   * 处理地图点击事件
-   * @param {Object} coord 点击位置的坐标
+   * 处理地图点击事件 - 修复版本，支持EditPoint命令的位置选择
    */
   handleMapClick(coord) {
-    // 只有当前有命令且命令需要地图交互时才处理点击
     const commandStatus = this.commandSystem.getCurrentCommandStatus();
+    
+    console.log('🗺️ 控制器收到地图点击:', {
+      commandName: commandStatus.commandName,
+      hasCommand: commandStatus.hasCommand,
+      isWaitingForMapClick: commandStatus.isWaitingForMapClick,
+      coord: coord
+    });
+
+    // 只有当前有命令且命令需要地图交互时才处理点击
     if (!commandStatus.hasCommand || !commandStatus.isWaitingForMapClick) {
+      console.log('🚫 忽略地图点击：无活动命令或命令不需要地图交互');
       return;
     }
 
-    // 验证坐标
     if (!GeometryUtils.validateCoordinate(coord)) {
       this.uiView.addOutput('坐标无效，请重新选择位置', 'error');
       return;
     }
 
-    // 将点击事件传递给命令系统
+    console.log('📍 处理地图点击，命令:', commandStatus.commandName);
+
+    // 将点击事件传递给命令系统处理
     const result = this.commandSystem.handleMapClick(coord);
     
+    console.log('🎯 命令系统处理地图点击结果:', result);
+    
     if (result.success) {
-      // 对于AddPoint命令，显示临时预览点
+      // 🔧 修复：对于AddPoint命令才显示临时预览点
+      // EditPoint命令不需要临时预览点，因为它有自己的交互逻辑
       if (commandStatus.commandName === 'AddPointCommandHandler') {
         this.mapView.showTemporaryPoint(coord);
       }
-      // 对于AddPolyline命令，MapView会自动处理临时预览
       
-      // 处理命令结果
+      // 🔧 关键修复：确保所有成功的地图点击结果都正确处理
       this.handleCommandResult(result);
-      
-      // 强制更新输入状态
       this.updateCommandInputState();
     } else {
       this.uiView.addOutput(result.message || '地图点击处理失败', 'error');
@@ -428,19 +465,26 @@ class EditorController {
   }
 
   /**
-   * 更新命令输入状态
+   * 更新命令输入状态 - 增强版本，提供统一的确认提示
    */
   updateCommandInputState() {
     const status = this.commandSystem.getCurrentCommandStatus();
     
     if (status.hasCommand) {
-      // 有活动命令时，使用命令提供的占位符
+      let placeholder = status.placeholder;
+      
+      // 🔧 修复：为所有需要确认的状态添加统一的确认提示
+      if (placeholder && !placeholder.includes('按回车') && !placeholder.includes('右键')) {
+        if (status.placeholder.includes('确认') || status.placeholder.includes('完成')) {
+          placeholder += ' (回车确认 或 地图右键确认)';
+        }
+      }
+      
       this.uiView.updateCommandInput(
         this.uiView.commandInput ? this.uiView.commandInput.value : '',
-        status.placeholder
+        placeholder
       );
     } else {
-      // 没有活动命令时，显示默认占位符
       this.uiView.updateCommandInput(
         this.uiView.commandInput ? this.uiView.commandInput.value : '', 
         '输入命令 (例如: AddPoint, AddPolyline)'
@@ -448,17 +492,11 @@ class EditorController {
     }
   }
 
-  /**
-   * 更新UI显示
-   */
   updateUI() {
     this.updateGeometryList();
     this.updateStatusBar();
   }
 
-  /**
-   * 更新状态栏
-   */
   updateStatusBar() {
     const stats = this.getStatistics();
     if (this.uiView.updateStatusBar) {
@@ -466,42 +504,29 @@ class EditorController {
     }
   }
 
-  /**
-   * 更新几何实体列表显示
-   */
   updateGeometryList() {
     const points = this.czmlModel.getAllPoints();
     const polylines = this.czmlModel.getAllPolylines();
     const allGeometries = this.czmlModel.getAllGeometries();
     const czmlData = this.czmlModel.getCzmlDocument();
     
-    // 更新显示，传入所有几何实体
     this.uiView.updatePointsList(allGeometries, czmlData);
   }
 
-  /**
-   * 更新CZML数据
-   * @param {Array} czmlData 新的CZML数据
-   */
   updateCzmlData(czmlData) {
     try {
-      // 验证CZML数据结构
       if (!Array.isArray(czmlData) || czmlData.length === 0) {
         throw new Error('CZML数据必须是非空数组');
       }
 
-      // 验证document包
       if (!czmlData[0].id || czmlData[0].id !== 'document') {
         throw new Error('CZML数组的第一个元素必须是document包');
       }
 
-      // 清空命令历史（因为数据被外部修改）
       this.commandSystem.clearHistory();
 
-      // 直接替换模型中的CZML文档
       this.czmlModel.czmlDocument = [...czmlData];
       
-      // 重置ID计数器，基于现有数据
       let maxPointId = 0;
       let maxPolylineId = 0;
       
@@ -522,7 +547,6 @@ class EditorController {
       this.czmlModel.idCounter = maxPointId + 1;
       this.czmlModel.polylineIdCounter = maxPolylineId + 1;
 
-      // 通知监听器数据已变化
       this.czmlModel.notifyListeners();
 
       this.uiView.addOutput('CZML数据更新成功！命令历史已重置', 'success');
@@ -539,23 +563,15 @@ class EditorController {
     this.uiView.updateCzmlDisplay(czmlData);
   }
 
-  /**
-   * 获取当前CZML数据（供外部使用）
-   * @returns {Array} CZML文档
-   */
   getCzmlData() {
     return this.czmlModel.getCzmlDocument();
   }
 
-  /**
-   * 导出CZML文件
-   */
   exportCzml() {
     try {
       const czmlData = this.getCzmlData();
       const jsonString = JSON.stringify(czmlData, null, 2);
       
-      // 创建下载链接
       const blob = new Blob([jsonString], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       
@@ -577,10 +593,6 @@ class EditorController {
     }
   }
 
-  /**
-   * 获取统计信息
-   * @returns {Object} 统计信息对象
-   */
   getStatistics() {
     const points = this.czmlModel.getAllPoints();
     const polylines = this.czmlModel.getAllPolylines();
@@ -589,18 +601,15 @@ class EditorController {
     const historyInfo = this.commandSystem.getCommandHistoryInfo();
     
     return {
-      // 几何数据统计
       totalPoints: points.length,
       totalPolylines: polylines.length,
       totalGeometries: points.length + polylines.length,
       czmlSize: JSON.stringify(this.getCzmlData()).length,
       
-      // 命令系统统计
       registeredCommands: commandStats.registeredCommands,
       hasActiveCommand: commandStatus.hasCommand,
       activeCommand: commandStatus.commandName || null,
       
-      // 历史统计
       inputHistoryLength: this.inputHistory.length,
       commandHistoryLength: historyInfo.totalCommands,
       canUndo: historyInfo.canUndo,
@@ -608,55 +617,30 @@ class EditorController {
     };
   }
 
-  /**
-   * 执行命令（编程接口）
-   * @param {string} command 要执行的命令
-   */
   executeCommand(command) {
     this.handleCommand(command);
   }
 
-  /**
-   * 撤销操作（编程接口）
-   */
   undo() {
     this.handleUndo();
   }
 
-  /**
-   * 重做操作（编程接口）
-   */
   redo() {
     this.handleRedo();
   }
 
-  /**
-   * 获取可用命令列表
-   * @returns {Array} 命令列表
-   */
   getAvailableCommands() {
     return this.commandSystem.getAvailableCommands();
   }
 
-  /**
-   * 获取输入历史
-   * @returns {Array} 输入历史
-   */
   getInputHistory() {
     return [...this.inputHistory];
   }
 
-  /**
-   * 获取命令执行历史
-   * @returns {Object} 命令历史信息
-   */
   getCommandHistory() {
     return this.commandSystem.getCommandHistoryInfo();
   }
 
-  /**
-   * 销毁控制器，清理资源
-   */
   destroy() {
     this.mapView.destroy();
     console.log('编辑器控制器已销毁');
